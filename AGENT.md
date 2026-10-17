@@ -13,14 +13,34 @@ uv run python scripts/ingest.py <pdf_dir>   # build the vector store (dev db fir
 uv run python scripts/inspect_context.py    # dump a thread's context as HTML for debugging
 ```
 
-- Requires a running Ollama server (`ollama run <model>` to pull models).
-- All settings live in `config.json` (copy `config.example.json`). Every key is read, type-checked, and path-resolved against the project root in `llmtui/config.py` — a bad `config.json` fails at import with the offending key. `config.json` is gitignored (it may hold secrets); model/provider configuration will live in `models.json`. Add new settings there, never via raw `os.getenv` elsewhere.
+- Requires a running model server, described in `config/models.json` (copy
+  `config/models.example.json`). Any OpenAI-compatible endpoint works —
+  Ollama, llama.cpp server, vLLM, LM Studio, or a remote API (OpenAI-compat
+  dialect only).
+- All settings live in `config/config.json` (copy
+  `config/config.example.json`). Every key is read, type-checked, and
+  path-resolved against the project root in `llmtui/config.py` — a bad file
+  fails at import with the offending key. Both files are gitignored (they may
+  hold secrets); model/provider configuration lives in `config/models.json`
+  (see `llmtui/models_config.py`), loaded at call time and re-read every time
+  `/model` opens. `$NAME` in any string interpolates from the environment.
+  Add new settings there, never via raw `os.getenv` elsewhere.
 - Prompts are plain files under `prompts/` (`system.txt`, `self_name.txt`),
-  pointed at by `.env` paths.
+  pointed at by `config/config.json` paths.
 
 ## Architecture
 
 - `app.py` — entry point. Wires model + checkpointer + MCP tools + TUI together.
+- `llmtui/config.py` — app-level settings from `config/config.json`:
+  fail-fast JSON loader, paths resolved against the project root. Knows
+  nothing about providers.
+- `llmtui/models_config.py` — providers and models from `config/models.json`
+  (pi-harness shape: `providers` map, per-model `samplingParams`). Loaded at
+  call time, never at import, so `/model` re-reads the file live. One dialect
+  (`openai-completions`); sampling params are merged into the request body
+  verbatim — core never interprets them. Reserved request fields (model,
+  messages, tools, ...) cannot be overridden. `fetch_context_window` is the
+  live ollama fallback for the context meter.
 - `llmtui/agent.py` — the agent: model construction, tool list, and the
   LangChain `create_agent` middleware stack (approval gate, tool-call limit,
   tool-error handling, malformed-call repair). Ordering of middleware matters;
@@ -33,7 +53,8 @@ uv run python scripts/inspect_context.py    # dump a thread's context as HTML fo
   handlers that feed failures back to the model instead of killing the run).
 - `llmtui/tui.py` — Textual frontend only. Streams via
   `astream_events(version="v3")`; it consumes events and never touches
-  agent/tool logic.
+  agent/tool logic. `/model` hot-swaps providers: a new graph over the same
+  checkpointer memory resumes the same thread — the graph holds no history.
 - `llmtui/writes.py` — diff previews for pending Obsidian writes (pure logic,
   view injected, no UI or MCP imports).
 - `llmtui/sessions.py`, `llmtui/naming.py` — session titles in a `sessions`
@@ -56,6 +77,8 @@ what the run emits — don't leak LangChain concerns into them.
   preserve that style. Don't strip explanatory comments.
 - The checkpointer must be `AsyncSqliteSaver` (the sync saver raises on async
   calls); `sessions.py` opens the same file with WAL for the sync side.
+- Config errors are deliberately self-describing — every loader failure names
+  the file, provider, and key. Read the message before guessing.
 - MCP failures are transport-level vs server-reported — `mcp.py` and
   `middleware/errors.py` distinguish and handle these deliberately.
 - Tests live in `tests/` (tui, middleware, tools, writes). Run them before
@@ -63,11 +86,10 @@ what the run emits — don't leak LangChain concerns into them.
 
 ## Roadmap (near-term, planned work)
 
-2. **Make the LLM provider pluggable.** Inference is currently hardwired to
-   `langchain_ollama.ChatOllama` in `llmtui/agent.py` (`build_model`) with
-   Ollama-specific sampling params in `.env`/`config.py`. Refactor so Ollama
-   remains the default but other providers can be loaded (provider config in
-   `.env`, e.g. a `PROVIDER` key, with per-provider model/sampling handling).
-   Note that `IS_REASONING`, `repeat_penalty`, `num_ctx` etc. are
-   Ollama-specific and need neutral equivalents or per-provider mapping.
-   `scripts/ingest.py` embeddings are also Ollama-bound (`EMBEDDING_MODEL`).
+1. **Provider-agnostic embeddings.** `scripts/ingest.py` still binds
+   embeddings to Ollama (`EMBEDDING_MODEL` in `config/config.json`); the chat
+   provider migration (#12) left this deliberately out of scope.
+2. **Scale config loading** (#13): frozen dataclass for app config instead of
+   module-level constants re-exports; models.json already loads at call time.
+3. **Runtime self-documentation** (#14): supply the agent with troubleshooting
+   docs for known failmodes (error text, system prompt, or state injection).

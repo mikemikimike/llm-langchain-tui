@@ -1,11 +1,22 @@
-Langchain practice with self-hosted model through ollama using `python3.12`
+Langchain practice: a chat agent behind a Textual TUI, running on any
+OpenAI-compatible model endpoint (Ollama locally, or a remote API) using
+`python3.12`
 
 Dependencies are managed with [`uv`](https://docs.astral.sh/uv/); after cloning, run `uv sync` to create `.venv` and install the pinned deps, then run things through `uv run`.
 
-Most constants and hyperparameters are defined in `.env`. paths in `.env` are relative to the project root and resolved against it in
-`config.py`, so scripts run the same from any directory.
+Configuration lives in `config/`, gitignored and copied from committed
+examples:
 
-works with ollama, so can install [models](https://ollama.com/library) through `ollama run`. im using the new qwen3.8-27b because why not.
+- `config/config.json` (from `config.example.json`) — app settings: paths,
+  milvus index options, obsidian key/cert. Paths are relative to the project
+  root and resolved in `config.py`, so scripts run the same from any
+  directory. A bad file fails at import naming the offending key.
+- `config/models.json` (from `models.example.json`) — providers and models,
+  pi-harness style. Any OpenAI-compatible endpoint (ollama, llama.cpp server,
+  vLLM, LM Studio, remote APIs) is a JSON entry; no code changes. Sampling
+  params (`temperature`, `top_k`, ...) are per model and sent through
+  verbatim. `"$ENV_VAR"` in any string reads from the environment. `/model`
+  in the TUI switches between entries and re-reads the file on every open.
 
 `ingest.py` to build vector db for retrieval. db is built into a dev_db first. to migrate dev milvus db to prod:
 
@@ -13,15 +24,7 @@ works with ollama, so can install [models](https://ollama.com/library) through `
 -rf milvus_prod.db && cp -r milvus_dev.db milvus_prod.db
 ```
 
-ollama server systemd env variables:
-
-```
-Environment="OLLAMA_FLASH_ATTENTION=1"
-Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
-Environment="OLLAMA_MAX_LOADED_MODELS=2"
-```
-
-more parameters (inside .env) injected through python
+embeddings are still ollama-bound (`EMBEDDING_MODEL` in `config/config.json`).
 
 ## running it
 
