@@ -1,0 +1,9 @@
+#!/bin/sh
+# runs the exact checks ci.yml runs — a red hook means the push would be red
+echo "pre-commit: make lint"
+make lint || {
+    echo ""
+    echo "pre-commit: FAILED — run 'make format', stage, and retry"
+    echo "(bypass with --no-verify, but CI will still reject the push)"
+    exit 1
+}
