@@ -674,16 +674,23 @@ class LlmTui(App):
         self._turn_started = 0.0
         self._out_chars = 0
 
-    def context_window(self) -> int:
-        """Context length the provider reports, 0 when it does not.
+    async def context_window(self) -> int:
+        """Context length for the meter: the entry's metadata when declared,
+        else the provider asked live, else 0 (plain token count).
 
-        Today: the contextWindow metadata on the model entry, which the file
-        should carry for every remote provider. Step 5 of
-        SPEC-provider-migration.md replaces the fallback with a live provider
-        query for servers that can say but are not declared here.
+        The live query is only the fallback for entries without contextWindow
+        metadata, and it is best-effort: a server that cannot say leaves the
+        meter with no ceiling rather than inventing one.
         """
 
-        return self.model_entry.context_window
+        if self.model_entry.context_window:
+            return self.model_entry.context_window
+        providers = load_models()
+        provider = providers.get(self.model_entry.provider)
+        if provider is None:
+            return 0
+        from llmtui.models_config import fetch_context_window
+        return await fetch_context_window(self.model_entry, provider)
 
     # ---------- layout ----------
 
@@ -697,13 +704,16 @@ class LlmTui(App):
             yield PromptArea(placeholder="ask about the library, or /help",
                              soft_wrap=True, highlight_cursor_line=False, id="prompt")
             yield StatusBar(
-                self.mcp_status, context_window=self.context_window(),
+                self.mcp_status,
                 model_label=f"{self.model_provider}/{self.model_entry.id}",
             )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.transcript = self.query_one("#transcript", VerticalScroll)
         self.status = self.query_one(StatusBar)
+        # the live context fallback is async, so the statusbar gets its meter
+        # filled in here rather than in compose
+        self.status.context_window = await self.context_window()
         self.status.refresh_line()
         self.query_one("#prompt", PromptArea).focus()
         # anchoring is Textual's own: the container follows new content and lets
@@ -1084,7 +1094,7 @@ class LlmTui(App):
         self.agent = build_agent(
             model, self.memory, self.mcp_tools,
         )
-        self.status.context_window = self.context_window()
+        self.status.context_window = await self.context_window()
         self.status.model_label = f"{self.model_provider}/{self.model_entry.id}"
         # refresh the header line
         self.query_one("#chrome", Static).update(

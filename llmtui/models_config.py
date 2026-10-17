@@ -265,3 +265,46 @@ def build_chat_model(entry: ModelEntry, provider: Provider):
         model=entry.id,
         extra_body=extra_body or None,
     )
+
+
+# ---------------------------------------------------------------------
+# context length from the provider
+#
+# metadata (contextWindow on the entry) wins when declared; this is the
+# live fallback for servers whose entries omit it. best-effort only -- a
+# failure here leaves the meter at 0 (plain token count), never raises
+# into the run
+# ---------------------------------------------------------------------
+
+async def fetch_context_window(entry: ModelEntry, provider: Provider) -> int:
+    """Ask the server how long the context is. 0 when it cannot say.
+
+    Only ollama has a shaped answer today (/api/show on the native port,
+    model_info.<arch>.context_length). The /v1 compat endpoint does not
+    expose it, so the baseUrl is rewritten to the native one. Other
+    openai-compat servers fall through to 0 promptly.
+    """
+
+    if provider.name != "ollama":
+        return 0
+
+    import httpx
+
+    # http://localhost:11434/v1 -> http://localhost:11434
+    native = provider.base_url.rstrip("/")
+    if native.endswith("/v1"):
+        native = native[: -len("/v1")]
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.post(
+                f"{native}/api/show",
+                json={"model": entry.id},
+                headers={"Authorization": f"Bearer {provider.api_key}"},
+            )
+            r.raise_for_status()
+            info = r.json().get("model_info") or {}
+        lengths = [v for k, v in info.items() if k.endswith(".context_length")]
+        return max(lengths) if lengths else 0
+    except Exception:
+        return 0
