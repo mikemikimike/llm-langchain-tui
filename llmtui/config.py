@@ -23,14 +23,16 @@ from pathlib import Path
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 # overridable so tests can point at their own config
-CONFIG_PATH: Path = Path(os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config.json"))
+CONFIG_PATH: Path = Path(
+    os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config" / "config.json")
+)
 
 
 def _load() -> dict:
     if not CONFIG_PATH.exists():
         raise RuntimeError(
-            f"{CONFIG_PATH} not found. Copy config.example.json to config.json"
-            " and fill in your values."
+            f"{CONFIG_PATH} not found. Copy config/config.example.json to"
+            " config/config.json and fill in your values."
         )
     try:
         with open(CONFIG_PATH) as f:
