@@ -23,7 +23,9 @@ from pathlib import Path
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 # overridable so tests can point at their own file
-MODELS_PATH: Path = Path(os.getenv("LLMTUI_MODELS", PROJECT_ROOT / "config" / "models.json"))
+MODELS_PATH: Path = Path(
+    os.getenv("LLMTUI_MODELS", PROJECT_ROOT / "config" / "models.json")
+)
 
 # the one dialect implemented; see build_chat_model
 SUPPORTED_APIS = ("openai-completions",)
@@ -129,13 +131,17 @@ def _require(mapping: dict, key: str, path: str, where: str):
 
 def _parse_model(raw, provider: str, base_url: str, path: str) -> ModelEntry:
     if not isinstance(raw, dict):
-        raise RuntimeError(f"{path}: models entries of provider {provider!r} must be objects")
+        raise RuntimeError(
+            f"{path}: models entries of provider {provider!r} must be objects"
+        )
     where = f"provider {provider!r} model"
     model_id = _require(raw, "id", path, where)
 
     reasoning = raw.get("reasoning")
     if reasoning is not None and not isinstance(reasoning, (bool, str)):
-        raise RuntimeError(f"{path}: {where} {model_id!r} 'reasoning' must be a bool or string")
+        raise RuntimeError(
+            f"{path}: {where} {model_id!r} 'reasoning' must be a bool or string"
+        )
     if isinstance(reasoning, str):
         reasoning = _interpolate(reasoning, path, f"{where} {model_id!r} reasoning")
 
@@ -218,7 +224,9 @@ def load_models(path: Path | None = None) -> dict[str, Provider]:
         for raw in models_raw:
             entry = _parse_model(raw, name, base_url, path)
             if entry.id in seen:
-                raise RuntimeError(f"{path}: duplicate model id {entry.id!r} in {where}")
+                raise RuntimeError(
+                    f"{path}: duplicate model id {entry.id!r} in {where}"
+                )
             seen.add(entry.id)
             models.append(entry)
 
@@ -263,7 +271,9 @@ def build_chat_model(entry: ModelEntry, provider: Provider):
     """
 
     if provider.api != "openai-completions":
-        raise RuntimeError(f"no builder for api {provider.api!r} (provider {provider.name!r})")
+        raise RuntimeError(
+            f"no builder for api {provider.api!r} (provider {provider.name!r})"
+        )
 
     from langchain_openai import ChatOpenAI
 

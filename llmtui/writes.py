@@ -35,13 +35,15 @@ class WritePreview:
 def _diff(path: str, before: str, after: str) -> str | None:
     """A unified diff, or None when the write would not change anything."""
 
-    lines = list(difflib.unified_diff(
-        before.splitlines(keepends=True),
-        after.splitlines(keepends=True),
-        f"{path} (now)",
-        f"{path} (after)",
-        n=DIFF_CONTEXT,
-    ))
+    lines = list(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            f"{path} (now)",
+            f"{path} (after)",
+            n=DIFF_CONTEXT,
+        )
+    )
     if not lines:
         return None
     # a file with no trailing newline would otherwise run its last line into the
@@ -56,10 +58,16 @@ def _counts(diff: str) -> str:
     they have to be skipped or every diff reads as one line more than it is.
     """
 
-    added = sum(1 for line in diff.splitlines()
-                if line.startswith("+") and not line.startswith("+++"))
-    removed = sum(1 for line in diff.splitlines()
-                  if line.startswith("-") and not line.startswith("---"))
+    added = sum(
+        1
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    removed = sum(
+        1
+        for line in diff.splitlines()
+        if line.startswith("-") and not line.startswith("---")
+    )
     parts = []
     if added:
         parts.append(f"+{added}")
@@ -102,7 +110,8 @@ async def preview_write(
 
     if read is None:
         return WritePreview(
-            tool_name, path,
+            tool_name,
+            path,
             summary=f"{tool_name} on {path}",
             note="obsidian is not connected, so there is nothing to compare against",
         )
@@ -120,7 +129,9 @@ async def preview_write(
         # ask for -- a write creates it. the text still goes in the note in case
         # the read failed for some other reason
         before, missing = "", True
-        first_failure = str(exc).splitlines()[0][:80] if str(exc) else type(exc).__name__
+        first_failure = (
+            str(exc).splitlines()[0][:80] if str(exc) else type(exc).__name__
+        )
 
     if tool_name == "vault_write":
         after = content
@@ -132,24 +143,27 @@ async def preview_write(
         after = _patched(before, str(args.get("operation", "")), content)
         if after is None:
             return WritePreview(
-                tool_name, path,
+                tool_name,
+                path,
                 summary=f"{args.get('operation')} on {path}",
                 note=f"a {args.get('operation')} patch has no text to compare, "
-                     f"so the arguments are all there is to go on: {args}",
+                f"so the arguments are all there is to go on: {args}",
             )
     else:
         return WritePreview(
-            tool_name, path,
+            tool_name,
+            path,
             summary=f"{tool_name} on {path}",
             note=f"no preview is built for this tool, so the arguments are all "
-                 f"there is to go on: {args}",
+            f"there is to go on: {args}",
         )
 
     diff = _diff(path, before, after)
 
     if diff is None:
         return WritePreview(
-            tool_name, path,
+            tool_name,
+            path,
             summary=f"{tool_name} on {path}",
             note="this would leave the note exactly as it is",
         )
@@ -157,12 +171,15 @@ async def preview_write(
     where = f"{path}{_where(target)}"
     if missing:
         return WritePreview(
-            tool_name, where,
+            tool_name,
+            where,
             summary=f"creates {where} · {_counts(diff)}",
             diff=diff,
             note=f"nothing is there to read yet ({first_failure})",
         )
-    return WritePreview(tool_name, where, summary=f"{_counts(diff)} in {where}", diff=diff)
+    return WritePreview(
+        tool_name, where, summary=f"{_counts(diff)} in {where}", diff=diff
+    )
 
 
 def _where(target: dict) -> str:

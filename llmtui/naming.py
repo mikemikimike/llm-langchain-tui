@@ -1,5 +1,8 @@
 """Letting the model title its own conversation once the first turn is done."""
 
+import asyncio
+from pathlib import Path
+
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 
@@ -25,7 +28,13 @@ def strip_tool_context(messages: list[BaseMessage]) -> list[BaseMessage]:
         # rid AI output from its reasoning and tool call blocks
         if isinstance(m, AIMessage):
             # holy list comp that extracts only the text output from the AIMessage
-            text: str = "\n".join([block.get("text") for block in m.content if block.get("type") == "text"])
+            text: str = "\n".join(
+                [
+                    block.get("text")
+                    for block in m.content
+                    if block.get("type") == "text"
+                ]
+            )
             if not text.strip():
                 continue
             cleaned.append(AIMessage(content=text))
@@ -36,20 +45,25 @@ def strip_tool_context(messages: list[BaseMessage]) -> list[BaseMessage]:
     return cleaned
 
 
-async def name_session_if_unnamed(agent, model, sqlite_connection, agent_thread_config) -> None:
+async def name_session_if_unnamed(
+    agent, model, sqlite_connection, agent_thread_config
+) -> None:
     """Ask the model for a title, but only the first time a thread finishes a turn."""
 
     # self-name the session if not already named
-    if not is_session_named(sqlite_connection, agent_thread_config["configurable"]["thread_id"]):
+    if not is_session_named(
+        sqlite_connection, agent_thread_config["configurable"]["thread_id"]
+    ):
         # aget_state, not get_state: the checkpointer is AsyncSqliteSaver and
         # the sync accessors raise NotImplementedError against it
         state = await agent.aget_state(agent_thread_config)
         self_naming_prompt = strip_tool_context(state.values["messages"])
-        with open(SELF_NAME_PROMPT_PATH, 'r') as f:
-            p = f.read()
+        # asyncio.to_thread: the prompt file is small, but blocking open()
+        # inside a coroutine stalls the event loop's other tasks
+        p = await asyncio.to_thread(Path(SELF_NAME_PROMPT_PATH).read_text)
         self_naming_prompt.append(HumanMessage(p))
         set_session_title(
             sqlite_connection,
             agent_thread_config["configurable"]["thread_id"],
-            (await model.ainvoke(self_naming_prompt)).content
+            (await model.ainvoke(self_naming_prompt)).content,
         )

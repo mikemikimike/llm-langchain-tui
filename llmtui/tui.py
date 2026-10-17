@@ -353,7 +353,9 @@ class WriteCard(Vertical):
         self._decided: asyncio.Future = asyncio.get_running_loop().create_future()
 
     def compose(self) -> ComposeResult:
-        yield Static(f"✎ {self.preview.tool}  {self.preview.path}", classes="write-head")
+        yield Static(
+            f"✎ {self.preview.tool}  {self.preview.path}", classes="write-head"
+        )
         yield Static(self.preview.summary, classes="write-summary")
         if self.preview.note:
             yield Static(self.preview.note, classes="write-note")
@@ -478,7 +480,9 @@ class StatusBar(Static):
             label = f"mcp [{colour}]{len(live)}/{len(servers)}[/]"
         else:
             label = "mcp " + " ".join(
-                f"[$success]{name}[/]" if failed is None else f"[$error]{name} ({failed})[/]"
+                f"[$success]{name}[/]"
+                if failed is None
+                else f"[$error]{name} ({failed})[/]"
                 for name, failed in servers.items()
             )
 
@@ -933,7 +937,9 @@ class LlmTui(App):
             await turn.start_round()
             async for event in message:
                 delta = event.get("delta")
-                if event.get("event") != "content-block-delta" or not isinstance(delta, dict):
+                if event.get("event") != "content-block-delta" or not isinstance(
+                    delta, dict
+                ):
                     continue
                 kind = delta.get("type")
                 if kind == "reasoning-delta" and config.DISPLAY_THINKING:
@@ -993,7 +999,9 @@ class LlmTui(App):
                 continue
             usage = message.usage_metadata or {}
             if usage.get("input_tokens"):
-                self.status.ctx_used = usage["input_tokens"] + usage.get("output_tokens", 0)
+                self.status.ctx_used = usage["input_tokens"] + usage.get(
+                    "output_tokens", 0
+                )
             meta = message.response_metadata or {}
             count, duration = meta.get("eval_count"), meta.get("eval_duration")
             if count and duration:
@@ -1034,7 +1042,9 @@ class LlmTui(App):
                 list_sessions(self.sqlite_connection), start=1
             ):
                 mark = "[b]›[/b]" if thread_id == current else " "
-                lines.append(f"{mark} {i}. {title or '(untitled)'}  [dim]{updated_at}[/dim]")
+                lines.append(
+                    f"{mark} {i}. {title or '(untitled)'}  [dim]{updated_at}[/dim]"
+                )
             await self._note("\n".join(lines) or "no sessions yet")
 
         elif command == "name":
@@ -1124,7 +1134,10 @@ class LlmTui(App):
         model = build_model(selector)
         providers = load_models()
         entry = next(
-            m for p in providers.values() for m in p.models if f"{p.name}/{m.id}" == selector
+            m
+            for p in providers.values()
+            for m in p.models
+            if f"{p.name}/{m.id}" == selector
         )
         self.model = model
         self.model_entry = entry
@@ -1137,7 +1150,9 @@ class LlmTui(App):
         self.status.context_window = await self.context_window()
         self.status.model_label = f"{self.model_provider}/{self.model_entry.id}"
         # refresh the header line
-        self.query_one("#chrome", Static).update(f"llm-tui   [dim]{model.model_name}[/dim]")
+        self.query_one("#chrome", Static).update(
+            f"llm-tui   [dim]{model.model_name}[/dim]"
+        )
 
     async def start_new_thread(self) -> None:
         """Point at a fresh thread and drop everything describing the old one.
@@ -1176,7 +1191,9 @@ class LlmTui(App):
 
         for message in messages:
             if isinstance(message, HumanMessage):
-                await self.transcript.mount(Static(str(message.content), classes="turn user"))
+                await self.transcript.mount(
+                    Static(str(message.content), classes="turn user")
+                )
                 continue
             if not isinstance(message, AIMessage):
                 continue

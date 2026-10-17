@@ -1,20 +1,16 @@
-import os
-import sys
-import shutil
 import argparse
-from pathlib import Path
+import os
+import shutil
+import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-
-from tqdm import tqdm
-
-from langchain_core.documents import Document
+from pathlib import Path
 
 from langchain_community.document_loaders import PyMuPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+from langchain_core.documents import Document
+from langchain_milvus import BM25BuiltInFunction, Milvus
 from langchain_ollama.embeddings import OllamaEmbeddings
-
-from langchain_milvus import Milvus, BM25BuiltInFunction
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from tqdm import tqdm
 
 # this is run straight from a shell, so the project root has to go on the path
 # before anything under llmtui can be imported
@@ -60,13 +56,15 @@ if not Path(PDF_DIR).is_dir():
 
 # check for protecting previous db
 if Path(MILVUS_DB).exists():
-    confirm = input(f"{MILVUS_DB} already exists. Wipe it before ingesting to avoid duplicates? (y/N): ")
+    confirm = input(
+        f"{MILVUS_DB} already exists. Wipe it before ingesting to avoid duplicates? (y/N): "
+    )
     if confirm.strip().lower() == "y":
         shutil.rmtree(MILVUS_DB)
         print("Wiped existing vector store.")
     else:
         sys.exit("Aborting.")
-        
+
 
 embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
 
@@ -85,11 +83,19 @@ vector_store = Milvus(
     # because dense vectors are static-sized while sparse vectors are varying.
     # cost me hours. fuck this guy.
     index_params=[
-        {"metric_type": DENSE_METRIC_TYPE, "index_type": DENSE_INDEX_TYPE, "params": {}},
-        {"metric_type": SPARSE_METRIC_TYPE, "index_type": SPARSE_INDEX_TYPE, "params": {}},
+        {
+            "metric_type": DENSE_METRIC_TYPE,
+            "index_type": DENSE_INDEX_TYPE,
+            "params": {},
+        },
+        {
+            "metric_type": SPARSE_METRIC_TYPE,
+            "index_type": SPARSE_INDEX_TYPE,
+            "params": {},
+        },
     ],
     # milvus grpc sends keep_alive messages, adding noise to the frontend
-    connection_args={"uri": MILVUS_DB, "grpc_options": MILVUS_GRPC_OPTIONS}
+    connection_args={"uri": MILVUS_DB, "grpc_options": MILVUS_GRPC_OPTIONS},
 )
 
 pdf_paths = list(Path(PDF_DIR).rglob("*.pdf"))
@@ -104,7 +110,9 @@ def load_pdf(path: Path) -> list[Document]:
 docs = []
 with ProcessPoolExecutor(max_workers=CPU_COUNT) as executor:
     futures = {executor.submit(load_pdf, path): path for path in pdf_paths}
-    for future in tqdm(as_completed(futures), total=len(futures), desc="Loading PDFs", unit="file"):
+    for future in tqdm(
+        as_completed(futures), total=len(futures), desc="Loading PDFs", unit="file"
+    ):
         path = futures[future]
         try:
             docs.extend(future.result())
@@ -114,7 +122,9 @@ with ProcessPoolExecutor(max_workers=CPU_COUNT) as executor:
 print(f"Loaded {len(docs)} pages, splitting into chunks...")
 
 # recursive text splitting because data is pdfs with non-uniform structure
-splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+)
 split = splitter.split_documents(docs)
 # without this, i got very small chunks with book titles and keywords that
 # get very high ranking matches but dont return anything actionable.
@@ -124,7 +134,7 @@ chunks = [c for c in split if len(c.page_content.strip()) >= MIN_CHUNK_CHARS]
 print(f"Dropped {len(split) - len(chunks)} chunks under {MIN_CHUNK_CHARS} chars.")
 print(f"Embedding and inserting {len(chunks)} chunks...")
 
-batches = [chunks[i:i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
+batches = [chunks[i : i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
 
 if batches:
     # i frontload and create the collection and its schema.
@@ -132,10 +142,17 @@ if batches:
     vector_store.add_documents(batches[0])
     # cheeky little parallelisation again. god forbid i doom scroll too long
     with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as executor:
-        futures = {executor.submit(vector_store.add_documents, b): n
-                   for n, b in enumerate(batches[1:], start=1)}
-        for future in tqdm(as_completed(futures), total=len(batches), initial=1,
-                           desc="Embedding+inserting", unit="batch"):
+        futures = {
+            executor.submit(vector_store.add_documents, b): n
+            for n, b in enumerate(batches[1:], start=1)
+        }
+        for future in tqdm(
+            as_completed(futures),
+            total=len(batches),
+            initial=1,
+            desc="Embedding+inserting",
+            unit="batch",
+        ):
             try:
                 future.result()
             except Exception as exc:

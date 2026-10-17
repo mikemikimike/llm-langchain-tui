@@ -3,9 +3,8 @@
 import json
 import uuid
 
+from langchain.agents.middleware import AgentState, Runtime, after_model
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
-from langchain.agents.middleware import after_model, AgentState, Runtime
-
 
 # hand the turn back this many times before letting it end. an invalid call
 # never reaches the tools node, so the tool call limit never counts it and
@@ -56,12 +55,14 @@ def _rebuilt(message: AIMessage, blocks: list, tool_calls: list) -> AIMessage:
     metadata, so those blocks reach the request raw and Ollama rejects them.
     """
 
-    return message.model_copy(update={
-        "content": blocks,
-        "tool_calls": tool_calls,
-        # by here every invalid call has been either repaired or reported
-        "invalid_tool_calls": [],
-    })
+    return message.model_copy(
+        update={
+            "content": blocks,
+            "tool_calls": tool_calls,
+            # by here every invalid call has been either repaired or reported
+            "invalid_tool_calls": [],
+        }
+    )
 
 
 def _repair_attempts(messages: list) -> int:
@@ -75,7 +76,9 @@ def _repair_attempts(messages: list) -> int:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             break
-        if isinstance(message, ToolMessage) and str(message.content).startswith(REPAIR_MARKER):
+        if isinstance(message, ToolMessage) and str(message.content).startswith(
+            REPAIR_MARKER
+        ):
             attempts += 1
     return attempts
 
@@ -114,13 +117,15 @@ def repair_tool_calls(state: AgentState, runtime: Runtime) -> dict | None:
             unrepairable.append(call)
             continue
         for n, args in enumerate(objects):
-            recovered.append({
-                "name": call["name"],
-                "args": args,
-                # the first keeps the model's own id, the rest need their own
-                "id": call["id"] if n == 0 else str(uuid.uuid4()),
-                "type": "tool_call",
-            })
+            recovered.append(
+                {
+                    "name": call["name"],
+                    "args": args,
+                    # the first keeps the model's own id, the rest need their own
+                    "id": call["id"] if n == 0 else str(uuid.uuid4()),
+                    "type": "tool_call",
+                }
+            )
 
     # drop invalids from the original message, so that we can later put the
     # fixed versions back in
@@ -129,9 +134,11 @@ def repair_tool_calls(state: AgentState, runtime: Runtime) -> dict | None:
     for block in message.content:
         # a content list can hold bare strings as well as block dicts, and
         # .get() would blow up on a string, so only dicts get type-checked
-        if (isinstance(block, dict)
-                and block.get("type") == "invalid_tool_call"
-                and block.get("id") in handled):
+        if (
+            isinstance(block, dict)
+            and block.get("type") == "invalid_tool_call"
+            and block.get("id") in handled
+        ):
             continue
         blocks.append(block)
 
@@ -153,15 +160,21 @@ def repair_tool_calls(state: AgentState, runtime: Runtime) -> dict | None:
     # pipe back out to the tool node the newly fixed tool calls
     if recovered:
         for call in recovered:
-            blocks.append({
-                "type": "tool_call",
-                "id": call["id"],
-                "name": call["name"],
-                "args": call["args"],
-            })
-        print(f"[REPAIR] recovered {len(recovered)} tool call(s) from malformed arguments")
+            blocks.append(
+                {
+                    "type": "tool_call",
+                    "id": call["id"],
+                    "name": call["name"],
+                    "args": call["args"],
+                }
+            )
+        print(
+            f"[REPAIR] recovered {len(recovered)} tool call(s) from malformed arguments"
+        )
         if unrepairable:
-            print(f"[REPAIR] {len(unrepairable)} call(s) could not be recovered, reported to the model")
+            print(
+                f"[REPAIR] {len(unrepairable)} call(s) could not be recovered, reported to the model"
+            )
         return {
             "messages": [
                 # any calls the model got right are kept alongside the repairs
@@ -176,7 +189,9 @@ def repair_tool_calls(state: AgentState, runtime: Runtime) -> dict | None:
     # if limit = 1 and 4 tool calls are received, the first 3 make it through, and
     # its reported back to the agent that the 4th didnt make it through
     if _repair_attempts(messages) >= MAX_REPAIR_ATTEMPTS:
-        print(f"[REPAIR] gave up after repeated malformed tool calls, {len(unrepairable)} dropped")
+        print(
+            f"[REPAIR] gave up after repeated malformed tool calls, {len(unrepairable)} dropped"
+        )
         return {
             "messages": [
                 _rebuilt(message, blocks, []),
@@ -188,18 +203,20 @@ def repair_tool_calls(state: AgentState, runtime: Runtime) -> dict | None:
     print("[REPAIR] arguments unparseable, handing the turn back")
     handbacks = []
     for call in unrepairable:
-        handbacks.append(ToolMessage(
-            content=(
-                f"{REPAIR_MARKER} Your `{call['name']}` call could not be read: "
-                f"{call.get('error', 'arguments were not valid JSON')}. "
-                f"Reissue it as a single call whose arguments are one JSON "
-                f"object, for example {{\"argument\": \"value\"}}. To run the "
-                f"tool more than once, make each run its own separate call."
-            ),
-            tool_call_id=call["id"],
-            name=call["name"],
-            status="error",
-        ))
+        handbacks.append(
+            ToolMessage(
+                content=(
+                    f"{REPAIR_MARKER} Your `{call['name']}` call could not be read: "
+                    f"{call.get('error', 'arguments were not valid JSON')}. "
+                    f"Reissue it as a single call whose arguments are one JSON "
+                    f'object, for example {{"argument": "value"}}. To run the '
+                    f"tool more than once, make each run its own separate call."
+                ),
+                tool_call_id=call["id"],
+                name=call["name"],
+                status="error",
+            )
+        )
 
     return {
         "messages": [_rebuilt(message, blocks, [])] + handbacks,

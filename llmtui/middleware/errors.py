@@ -10,7 +10,7 @@ from langchain.agents.middleware import ToolCallRequest
 
 
 def route_tool_error(
-    mcp_tool_names: set[str]
+    mcp_tool_names: set[str],
 ) -> Callable[[Exception, ToolCallRequest], str | None]:
     """Build the on_error that picks a handler per tool.
 
