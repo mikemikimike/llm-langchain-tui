@@ -14,10 +14,7 @@ uv run python scripts/inspect_context.py    # dump a thread's context as HTML fo
 ```
 
 - Requires a running Ollama server (`ollama run <model>` to pull models).
-- All settings live in `.env` (copy `.env.example`). Every key is read,
-  type-checked, and path-resolved against the project root in
-  `llmtui/config.py` — a bad `.env` fails at import with the offending key.
-  Add new settings there, never via raw `os.getenv` elsewhere.
+- All settings live in `config.json` (copy `config.example.json`). Every key is read, type-checked, and path-resolved against the project root in `llmtui/config.py` — a bad `config.json` fails at import with the offending key. `config.json` is gitignored (it may hold secrets); model/provider configuration will live in `models.json`. Add new settings there, never via raw `os.getenv` elsewhere.
 - Prompts are plain files under `prompts/` (`system.txt`, `self_name.txt`),
   pointed at by `.env` paths.
 

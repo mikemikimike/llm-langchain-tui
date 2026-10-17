@@ -1,0 +1,26 @@
+{
+    "paths": {
+        "sqlite_db": "db/checkpoints.sqlite",
+        "milvus_dev_db": "db/milvus_dev.db",
+        "milvus_prod_db": "db/milvus_prod.db",
+        "system_prompt": "prompts/system.txt",
+        "self_name_prompt": "prompts/self_name.txt",
+        "obsidian_cert": "resources/obsidian-local-rest-api.pem"
+    },
+    "milvus": {
+        "dense_metric_type": "COSINE",
+        "dense_index_type": "AUTOINDEX",
+        "sparse_metric_type": "BM25",
+        "sparse_index_type": "SPARSE_INVERTED_INDEX"
+    },
+    "embeddings": {
+        "embedding_model": "bge-m3:latest"
+    },
+    "agent": {
+        "max_tool_calls": 3,
+        "display_thinking": true
+    },
+    "obsidian": {
+        "api_key": "enter your api key here"
+    }
+}

@@ -1,105 +1,126 @@
-"""Every setting read from .env, resolved and type-checked in one place.
+"""App configuration, loaded from config.json and validated at import.
 
-os.getenv returns None for a key that is missing or misspelled, and that None
-then travels a long way before something breaks in a message that does not
-name the key. Reading them all here means a bad .env fails at import, saying
-which key.
+A missing key, a mistyped value, or a whole missing section raises at import
+with the offending key in the message — the same fail-fast contract the old
+.env reader had, nothing travels far before it breaks.
 
-Relative paths in .env are resolved against the project root, so app.py and
-anything in scripts/ find db/ and prompts/ regardless of the directory they
-were launched from.
+Relative paths in config.json are resolved against the project root, so app.py
+and anything in scripts/ find db/ and prompts/ regardless of the directory
+they were launched from.
+
+config.json is gitignored (it can hold secrets, e.g. the Obsidian API key);
+config.example.json is the committed template. Copy it to config.json to run.
+
+Everything provider/model related lives in models.json (see
+llmtui/models_config.py, step 2 of SPEC-provider-migration.md) — nothing
+here knows about providers.
 """
 
+import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
-load_dotenv(PROJECT_ROOT / ".env")
+# overridable so tests can point at their own config
+CONFIG_PATH: Path = Path(os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config.json"))
 
 
-def _text(key: str) -> str:
-    value = os.getenv(key)
-    if value is None or not value.strip():
-        raise RuntimeError(f"{key} is missing or empty in {PROJECT_ROOT / '.env'}")
-    return value.strip()
-
-
-def _path(key: str) -> str:
-    """Absolute path as a string, the type os.getenv used to hand back."""
-
-    return str(PROJECT_ROOT / _text(key))
-
-
-def _int(key: str) -> int:
+def _load() -> dict:
+    if not CONFIG_PATH.exists():
+        raise RuntimeError(
+            f"{CONFIG_PATH} not found. Copy config.example.json to config.json"
+            " and fill in your values."
+        )
     try:
-        return int(_text(key))
-    except ValueError:
-        raise RuntimeError(f"{key} must be a whole number, got {_text(key)!r}") from None
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{CONFIG_PATH} is not valid JSON: {e}") from None
 
 
-def _float(key: str) -> float:
+_cfg = _load()
+
+
+def _section(name: str) -> dict:
+    section = _cfg.get(name)
+    if not isinstance(section, dict):
+        raise RuntimeError(f"{CONFIG_PATH}: missing or malformed section {name!r}")
+    return section
+
+
+def _get(section: dict, key: str) -> str:
+    value = section.get(key)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise RuntimeError(f"{CONFIG_PATH}: {key!r} is missing or empty")
+    return value.strip() if isinstance(value, str) else value
+
+
+def _path(section: dict, key: str) -> str:
+    """Absolute path as a string, resolved against the project root."""
+
+    return str(PROJECT_ROOT / _get(section, key))
+
+
+def _int(section: dict, key: str) -> int:
+    value = _get(section, key)
     try:
-        return float(_text(key))
-    except ValueError:
-        raise RuntimeError(f"{key} must be a number, got {_text(key)!r}") from None
+        return int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{CONFIG_PATH}: {key!r} must be a whole number, got {value!r}") from None
 
 
-def _flag(key: str) -> bool:
-    """A 0/1 switch. Anything else is a typo worth failing on."""
+# paths
+_paths = _section("paths")
+SQLITE_DB_PATH: str = _path(_paths, "sqlite_db")
+MILVUS_DEV_DB_PATH: str = _path(_paths, "milvus_dev_db")
+MILVUS_PROD_DB_PATH: str = _path(_paths, "milvus_prod_db")
+SYSTEM_PROMPT_PATH: str = _path(_paths, "system_prompt")
+SELF_NAME_PROMPT_PATH: str = _path(_paths, "self_name_prompt")
+OBSIDIAN_CERT_PATH: str = _path(_paths, "obsidian_cert")
 
-    value = _text(key)
-    if value not in ("0", "1"):
-        raise RuntimeError(f"{key} must be 0 or 1, got {value!r}")
-    return value == "1"
-
-
-# models
-MODEL: str = _text("MODEL")
-EMBEDDING_MODEL: str = _text("EMBEDDING_MODEL")
-
-# stores
-SQLITE_DB_PATH: str = _path("SQLITE_DB_PATH")
-MILVUS_DEV_DB_PATH: str = _path("MILVUS_DEV_DB_PATH")
-MILVUS_PROD_DB_PATH: str = _path("MILVUS_PROD_DB_PATH")
+# milvus index configuration, shared by ingest and search so the schemas match
+_milvus = _section("milvus")
+DENSE_METRIC_TYPE: str = _get(_milvus, "dense_metric_type")
+DENSE_INDEX_TYPE: str = _get(_milvus, "dense_index_type")
+SPARSE_METRIC_TYPE: str = _get(_milvus, "sparse_metric_type")
+SPARSE_INDEX_TYPE: str = _get(_milvus, "sparse_index_type")
 
 MILVUS_GRPC_OPTIONS: dict = {
     "grpc.keepalive_permit_without_calls": False,
     "grpc.keepalive_time_ms": 300_000,
 }
 
-# milvus index configuration, shared by ingest and search so the schemas match
-DENSE_METRIC_TYPE: str = _text("DENSE_METRIC_TYPE")
-DENSE_INDEX_TYPE: str = _text("DENSE_INDEX_TYPE")
-SPARSE_METRIC_TYPE: str = _text("SPARSE_METRIC_TYPE")
-SPARSE_INDEX_TYPE: str = _text("SPARSE_INDEX_TYPE")
-
-# prompts
-SYSTEM_PROMPT_PATH: str = _path("SYSTEM_PROMPT_PATH")
-SELF_NAME_PROMPT_PATH: str = _path("SELF_NAME_PROMPT_PATH")
+# embeddings (RAG). still Ollama-bound; the ingest pipeline is provider-agnostic
+# work for a later task (see SPEC-provider-migration.md, out of scope)
+_embeddings = _section("embeddings")
+EMBEDDING_MODEL: str = _get(_embeddings, "embedding_model")
 
 # agent behaviour
+_agent = _section("agent")
 # searches allowed per user turn
-MAX_TOOL_CALLS: int = _int("MAX_TOOL_CALLS")
-CONTEXT_SIZE: int = _int("CONTEXT_SIZE")
-DISPLAY_THINKING: bool = _flag("DISPLAY_THINKING")
+MAX_TOOL_CALLS: int = _int(_agent, "max_tool_calls")
+DISPLAY_THINKING: bool = bool(_get(_agent, "display_thinking"))
 
-# sampling
-IS_REASONING: bool = _flag("IS_REASONING")
-TEMPERATURE: float = _float("TEMPERATURE")
-TOP_K: int = _int("TOP_K")
-TOP_P: float = _float("TOP_P")
-REPETITION_PENALTY: float = _float("REPETITION_PENALTY")
+# obsidian / mcp
+_obsidian = _section("obsidian")
+OBSIDIAN_API_KEY: str = _get(_obsidian, "api_key")
 
-# where inspect_context.py leaves its rendered pages. not in .env because
-# nothing else reads it and it is not a knob worth turning
+# where inspect_context.py leaves its rendered pages. not in config.json
+# because nothing else reads it and it is not a knob worth turning
 CONTEXT_DUMP_DIR: str = str(PROJECT_ROOT / "resources" / "context_inspection")
 
-#API KEYS
-OBSIDIAN_API_KEY: str = _text("OBSIDIAN_API_KEY")
-# the certificate the Local REST API plugin signed for itself, trusted as a root
-# for that one connection. not a secret -- a certificate is the public half
-OBSIDIAN_CERT_PATH: str = _path("OBSIDIAN_CERT_PATH")
+
+# ---------------------------------------------------------------------
+# TRANSITIONAL (step 2/3 of SPEC-provider-migration.md): these are the
+# provider/model values the old .env used to carry, hardcoded to the
+# previous defaults until models.json exists and build_model() reads from
+# it. DELETE THIS BLOCK when step 3 lands.
+# ---------------------------------------------------------------------
+MODEL: str = "qwen3.8:27b"
+IS_REASONING: bool = True
+TEMPERATURE: float = 1.0
+TOP_K: int = 20
+TOP_P: float = 0.95
+REPETITION_PENALTY: float = 1.0
+CONTEXT_SIZE: int = 8000

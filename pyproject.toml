@@ -8,7 +8,6 @@ dependencies = [
     "langchain-community==0.4.2",
     "langgraph==1.2.11",
     "langchain-ollama==1.1.0",
-    "python-dotenv==1.2.3",
     "grandalf==0.8",
     "langgraph-checkpoint-sqlite==3.1.1",
     "langchain-milvus==0.4.0",

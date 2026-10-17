@@ -1121,7 +1121,6 @@ dependencies = [
     { name = "milvus-lite" },
     { name = "pymilvus" },
     { name = "pymupdf" },
-    { name = "python-dotenv" },
     { name = "textual" },
     { name = "tqdm" },
 ]
@@ -1139,7 +1138,6 @@ requires-dist = [
     { name = "milvus-lite", specifier = "==3.2.0" },
     { name = "pymilvus", specifier = "==3.0.1" },
     { name = "pymupdf", specifier = "==1.28.2" },
-    { name = "python-dotenv", specifier = "==1.2.3" },
     { name = "textual", specifier = "==8.2.8" },
     { name = "tqdm", specifier = "==4.70.0" },
 ]
