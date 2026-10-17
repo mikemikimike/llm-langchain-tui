@@ -429,10 +429,13 @@ class PromptArea(TextArea):
 class StatusBar(Static):
     """State, context pressure, generation speed and the MCP servers."""
 
-    def __init__(self, mcp_status: MCPStatus) -> None:
+    def __init__(self, mcp_status: MCPStatus, context_window: int = 0) -> None:
         super().__init__(id="status")
         self.state = "ready"
         self.ctx_used = 0
+        # filled in only when the provider reports its context length; 0 keeps
+        # the meter a plain token count (see refresh_line)
+        self.context_window = context_window
         self.tps = 0.0
         self.elapsed = 0.0
         # held by reference and read at render time, never copied. the
@@ -469,10 +472,16 @@ class StatusBar(Static):
     def refresh_line(self) -> None:
         parts = [f"[b]{self.state}[/b]"]
         if self.ctx_used:
-            parts.append(
-                f"ctx {meter(self.ctx_used, config.CONTEXT_SIZE)} "
-                f"{compact(self.ctx_used)}/{compact(config.CONTEXT_SIZE)}"
-            )
+            # context_window arrives filled in only when the provider said how
+            # big it is (step 5 of SPEC-provider-migration.md). without it the
+            # meter degrades to a plain token count -- no invented ceiling
+            if self.context_window:
+                parts.append(
+                    f"ctx {meter(self.ctx_used, self.context_window)} "
+                    f"{compact(self.ctx_used)}/{compact(self.context_window)}"
+                )
+            else:
+                parts.append(f"ctx {compact(self.ctx_used)}")
         if self.tps:
             parts.append(f"{self.tps:.0f} tok/s")
         if self.elapsed:
@@ -611,10 +620,19 @@ class LlmTui(App):
         self._turn_started = 0.0
         self._out_chars = 0
 
+    def context_window(self) -> int:
+        """Context length as the provider reports it, 0 when it does not.
+
+        Filled in by step 5 of SPEC-provider-migration.md; until then every
+        provider reports 0 and the meter stays a plain token count.
+        """
+
+        return 0
+
     # ---------- layout ----------
 
     def compose(self) -> ComposeResult:
-        yield Static(f"llm-tui   [dim]{config.MODEL}[/dim]", id="chrome")
+        yield Static(f"llm-tui   [dim]{self.model.model_name}[/dim]", id="chrome")
         yield VerticalScroll(id="transcript")
         # the statusbar blocks the last line of the TextArea because both of their
         # CSS are docked to the bottom. we do a hard split here and each are
@@ -622,7 +640,7 @@ class LlmTui(App):
         with Vertical(id="footer"):
             yield PromptArea(placeholder="ask about the library, or /help",
                              soft_wrap=True, highlight_cursor_line=False, id="prompt")
-            yield StatusBar(self.mcp_status)
+            yield StatusBar(self.mcp_status, context_window=self.context_window())
 
     def on_mount(self) -> None:
         self.transcript = self.query_one("#transcript", VerticalScroll)

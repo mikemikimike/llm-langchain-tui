@@ -111,18 +111,3 @@ OBSIDIAN_API_KEY: str = _get(_obsidian, "api_key")
 # where inspect_context.py leaves its rendered pages. not in config.json
 # because nothing else reads it and it is not a knob worth turning
 CONTEXT_DUMP_DIR: str = str(PROJECT_ROOT / "resources" / "context_inspection")
-
-
-# ---------------------------------------------------------------------
-# TRANSITIONAL (step 2/3 of SPEC-provider-migration.md): these are the
-# provider/model values the old .env used to carry, hardcoded to the
-# previous defaults until models.json exists and build_model() reads from
-# it. DELETE THIS BLOCK when step 3 lands.
-# ---------------------------------------------------------------------
-MODEL: str = "qwen3.8:27b"
-IS_REASONING: bool = True
-TEMPERATURE: float = 1.0
-TOP_K: int = 20
-TOP_P: float = 0.95
-REPETITION_PENALTY: float = 1.0
-CONTEXT_SIZE: int = 8000
