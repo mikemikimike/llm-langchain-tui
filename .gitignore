@@ -8,4 +8,6 @@ resources/
 # herve:gitignore:end
 .claude
 .env
+config/config.json
+config/models.json
 .vscode

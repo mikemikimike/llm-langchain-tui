@@ -17,25 +17,30 @@ import time
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.utils.uuid import uuid7
 from langgraph.types import Command
-
 from rich.syntax import Syntax
-
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.message import Message
 from textual.containers import Vertical, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Collapsible, Input, Markdown, OptionList, SelectionList, Static, TextArea,
+    Collapsible,
+    Input,
+    Markdown,
+    OptionList,
+    SelectionList,
+    Static,
+    TextArea,
 )
 
 from llmtui import config
+from llmtui.agent import build_agent, build_model
+from llmtui.models_config import load_models
 from llmtui.naming import name_session_if_unnamed
 from llmtui.sessions import delete_session, list_sessions, set_session_title
-from llmtui.tools.mcp import MCPStatus, WRITE_TOOLS, tool_text
+from llmtui.tools.mcp import WRITE_TOOLS, MCPStatus, tool_text
 from llmtui.writes import WritePreview, preview_write
-
 
 SPINNER: str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # how many blocks wide the context meter is drawn
@@ -273,8 +278,15 @@ class DiffScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         body = Static(classes="diff-body")
         if self.preview.diff:
-            body.update(Syntax(self.preview.diff, "diff", word_wrap=True,
-                               theme="ansi_dark", background_color="default"))
+            body.update(
+                Syntax(
+                    self.preview.diff,
+                    "diff",
+                    word_wrap=True,
+                    theme="ansi_dark",
+                    background_color="default",
+                )
+            )
         else:
             body.update(self.preview.note or "(nothing to show)")
         yield Vertical(
@@ -427,12 +439,19 @@ class PromptArea(TextArea):
 
 
 class StatusBar(Static):
-    """State, context pressure, generation speed and the MCP servers."""
+    """State, model, context pressure, generation speed and the MCP servers."""
 
-    def __init__(self, mcp_status: MCPStatus) -> None:
+    def __init__(
+        self, mcp_status: MCPStatus, context_window: int = 0, model_label: str = ""
+    ) -> None:
         super().__init__(id="status")
         self.state = "ready"
+        # provider/model shown next to the context usage; swap_model updates it
+        self.model_label = model_label
         self.ctx_used = 0
+        # filled in only when the provider reports its context length; 0 keeps
+        # the meter a plain token count (see refresh_line)
+        self.context_window = context_window
         self.tps = 0.0
         self.elapsed = 0.0
         # held by reference and read at render time, never copied. the
@@ -459,8 +478,7 @@ class StatusBar(Static):
             label = f"mcp [{colour}]{len(live)}/{len(servers)}[/]"
         else:
             label = "mcp " + " ".join(
-                f"[$success]{name}[/]" if failed is None
-                else f"[$error]{name} ({failed})[/]"
+                f"[$success]{name}[/]" if failed is None else f"[$error]{name} ({failed})[/]"
                 for name, failed in servers.items()
             )
 
@@ -468,11 +486,19 @@ class StatusBar(Static):
 
     def refresh_line(self) -> None:
         parts = [f"[b]{self.state}[/b]"]
+        if self.model_label:
+            parts.append(f"[dim]{self.model_label}[/dim]")
         if self.ctx_used:
-            parts.append(
-                f"ctx {meter(self.ctx_used, config.CONTEXT_SIZE)} "
-                f"{compact(self.ctx_used)}/{compact(config.CONTEXT_SIZE)}"
-            )
+            # context_window arrives filled in only when the provider said how
+            # big it is (step 5 of SPEC-provider-migration.md). without it the
+            # meter degrades to a plain token count -- no invented ceiling
+            if self.context_window:
+                parts.append(
+                    f"ctx {meter(self.ctx_used, self.context_window)} "
+                    f"{compact(self.ctx_used)}/{compact(self.context_window)}"
+                )
+            else:
+                parts.append(f"ctx {compact(self.ctx_used)}")
         if self.tps:
             parts.append(f"{self.tps:.0f} tok/s")
         if self.elapsed:
@@ -545,6 +571,46 @@ class SessionPicker(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ModelPicker(ModalScreen[str | None]):
+    """Pick a model. Returns its "provider/model" selector.
+
+    models.json is reloaded here, on every open, so edits to the file show
+    up without restarting the app (pi parity). The swap itself is cheap:
+    the graph holds no history -- that lives in the checkpointer keyed by
+    thread_id -- so a new graph over the same memory resumes the same
+    conversation. Reasoning/sampling params travel with the model entry.
+    """
+
+    BINDINGS = [("escape", "cancel", "cancel")]
+
+    def __init__(self, entries, current: str) -> None:
+        super().__init__()
+        self.entries = entries  # (selector, label) rows
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        rows = []
+        for selector, label in self.entries:
+            here = "  ·  current" if selector == self.current else ""
+            rows.append(f"{label}{here}")
+        yield Vertical(
+            Static("switch model", classes="modal-title"),
+            OptionList(*rows, id="picker"),
+            Static("enter switch · esc cancel", classes="modal-hint"),
+            classes="modal",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#picker", OptionList).focus()
+
+    @on(OptionList.OptionSelected, "#picker")
+    def chosen(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self.entries[event.option_index][0])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SessionDeleter(ModalScreen[list[str] | None]):
     """Tick sessions to remove, the current one included.
 
@@ -597,11 +663,27 @@ class LlmTui(App):
         ("ctrl+l", "clear", "clear transcript"),
     ]
 
-    def __init__(self, agent, model, sqlite_connection, agent_thread_config,
-                 mcp_status: MCPStatus, note_reader=None) -> None:
+    def __init__(
+        self,
+        agent,
+        model,
+        memory,
+        mcp_tools,
+        entry,
+        sqlite_connection,
+        agent_thread_config,
+        mcp_status: MCPStatus,
+        note_reader=None,
+    ) -> None:
         super().__init__()
         self.agent = agent
         self.model = model
+        # kept for switch_model: a new graph over the same memory and the same
+        # tools resumes the same thread with the new model
+        self.memory = memory
+        self.mcp_tools = mcp_tools
+        self.model_entry = entry
+        self.model_provider = entry.provider
         self.sqlite_connection = sqlite_connection
         self.agent_thread_config = agent_thread_config
         self.mcp_status = mcp_status
@@ -611,22 +693,51 @@ class LlmTui(App):
         self._turn_started = 0.0
         self._out_chars = 0
 
+    async def context_window(self) -> int:
+        """Context length for the meter: the entry's metadata when declared,
+        else the provider asked live, else 0 (plain token count).
+
+        The live query is only the fallback for entries without contextWindow
+        metadata, and it is best-effort: a server that cannot say leaves the
+        meter with no ceiling rather than inventing one.
+        """
+
+        if self.model_entry.context_window:
+            return self.model_entry.context_window
+        providers = load_models()
+        provider = providers.get(self.model_entry.provider)
+        if provider is None:
+            return 0
+        from llmtui.models_config import fetch_context_window
+
+        return await fetch_context_window(self.model_entry, provider)
+
     # ---------- layout ----------
 
     def compose(self) -> ComposeResult:
-        yield Static(f"llm-tui   [dim]{config.MODEL}[/dim]", id="chrome")
+        yield Static(f"llm-tui   [dim]{self.model.model_name}[/dim]", id="chrome")
         yield VerticalScroll(id="transcript")
         # the statusbar blocks the last line of the TextArea because both of their
         # CSS are docked to the bottom. we do a hard split here and each are
         # bottoming their own containers. nothing a 30 minute debug sidetracking cant fix :')
         with Vertical(id="footer"):
-            yield PromptArea(placeholder="ask about the library, or /help",
-                             soft_wrap=True, highlight_cursor_line=False, id="prompt")
-            yield StatusBar(self.mcp_status)
+            yield PromptArea(
+                placeholder="ask about the library, or /help",
+                soft_wrap=True,
+                highlight_cursor_line=False,
+                id="prompt",
+            )
+            yield StatusBar(
+                self.mcp_status,
+                model_label=f"{self.model_provider}/{self.model_entry.id}",
+            )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.transcript = self.query_one("#transcript", VerticalScroll)
         self.status = self.query_one(StatusBar)
+        # the live context fallback is async, so the statusbar gets its meter
+        # filled in here rather than in compose
+        self.status.context_window = await self.context_window()
         self.status.refresh_line()
         self.query_one("#prompt", PromptArea).focus()
         # anchoring is Textual's own: the container follows new content and lets
@@ -678,7 +789,9 @@ class LlmTui(App):
             # ask, resume, and again until it stops without asking
             while True:
                 stream = await self.agent.astream_events(
-                    payload, config=self.agent_thread_config, version="v3",
+                    payload,
+                    config=self.agent_thread_config,
+                    version="v3",
                 )
                 await asyncio.gather(
                     self._pump_messages(stream, turn),
@@ -708,7 +821,8 @@ class LlmTui(App):
         self.status.set_state("naming")
         try:
             await name_session_if_unnamed(
-                self.agent, self.model, self.sqlite_connection, self.agent_thread_config)
+                self.agent, self.model, self.sqlite_connection, self.agent_thread_config
+            )
         except Exception:
             # a failed title is not worth losing the turn over
             pass
@@ -725,9 +839,9 @@ class LlmTui(App):
         detail = f"✕ {type(exc).__name__}: {exc}"
 
         try:
-            messages = (
-                await self.agent.aget_state(self.agent_thread_config)
-            ).values["messages"]
+            messages = (await self.agent.aget_state(self.agent_thread_config)).values[
+                "messages"
+            ]
         except Exception:
             return detail
 
@@ -744,9 +858,11 @@ class LlmTui(App):
         asked = ", ".join(
             f"{call['name']} on {call['args'].get('path') or '?'}" for call in writes
         )
-        return (f"{detail}\n"
-                f"   this broke while setting up {asked}\n"
-                f"   the vault was not touched -- nothing runs before you approve it")
+        return (
+            f"{detail}\n"
+            f"   this broke while setting up {asked}\n"
+            f"   the vault was not touched -- nothing runs before you approve it"
+        )
 
     async def _review_writes(self, interrupts, turn: AssistantTurn) -> list[dict]:
         """One card at a time, and one decision back for each write asked about.
@@ -800,11 +916,14 @@ class LlmTui(App):
         if not wanted:
             return []
 
-        return [{
-            "type": "reject",
-            "message": "The turn was interrupted before this was approved, "
-                       "so it was not run. Ask again if it is still wanted.",
-        } for _ in range(wanted)]
+        return [
+            {
+                "type": "reject",
+                "message": "The turn was interrupted before this was approved, "
+                "so it was not run. Ask again if it is still wanted.",
+            }
+            for _ in range(wanted)
+        ]
 
     async def _pump_messages(self, stream, turn: AssistantTurn) -> None:
         """Reasoning and answer deltas, in the shape the sync renderer used."""
@@ -902,7 +1021,8 @@ class LlmTui(App):
                 "/list    every conversation so far\n"
                 "/name    title this conversation\n"
                 "/load    resume a conversation\n"
-                "/delete  remove conversations, this one included")
+                "/delete  remove conversations, this one included"
+            )
 
         elif command == "new":
             await self.start_new_thread()
@@ -910,7 +1030,9 @@ class LlmTui(App):
 
         elif command == "list":
             lines = []
-            for i, (thread_id, title, updated_at) in enumerate(list_sessions(self.sqlite_connection), start=1):
+            for i, (thread_id, title, updated_at) in enumerate(
+                list_sessions(self.sqlite_connection), start=1
+            ):
                 mark = "[b]›[/b]" if thread_id == current else " "
                 lines.append(f"{mark} {i}. {title or '(untitled)'}  [dim]{updated_at}[/dim]")
             await self._note("\n".join(lines) or "no sessions yet")
@@ -931,6 +1053,29 @@ class LlmTui(App):
                 self.agent_thread_config["configurable"]["thread_id"] = thread_id
                 await self.reload_transcript()
 
+        elif command == "model":
+            # models.json is read now, at open, never at launch: edits to the
+            # file land in the very next /model
+            try:
+                providers = load_models()
+            except RuntimeError as exc:
+                await self._note(f"✕ models.json: {exc}", failed=True)
+                return
+            entries = [
+                (f"{p.name}/{m.id}", f"{m.id}  [dim]· {p.name}[/]")
+                for p in providers.values()
+                for m in p.models
+            ]
+            current = f"{self.model_provider}/{self.model.model_name}"
+            selector = await self.push_screen_wait(ModelPicker(entries, current))
+            if selector and selector != current:
+                try:
+                    await self.switch_model(selector)
+                except RuntimeError as exc:
+                    await self._note(f"✕ {exc}", failed=True)
+                else:
+                    await self._note(f"model switched to {selector}")
+
         elif command == "delete":
             sessions = list_sessions(self.sqlite_connection)
             if not sessions:
@@ -947,7 +1092,8 @@ class LlmTui(App):
                     await self.start_new_thread()
                     await self._note(
                         f"deleted {len(doomed)} session(s), including this one — "
-                        f"started a new conversation")
+                        f"started a new conversation"
+                    )
                 else:
                     await self._note(f"deleted {len(doomed)} session(s)")
 
@@ -960,6 +1106,38 @@ class LlmTui(App):
         classes = "turn note failed" if failed else "turn note"
         await self.transcript.mount(Static(text, classes=classes))
         self.transcript.anchor()
+
+    async def switch_model(self, selector: str) -> None:
+        """Rebuild the graph over a new model, same memory, same thread.
+
+        The graph itself carries no conversation state -- history lives in the
+        checkpointer keyed by thread_id -- so pointing a fresh build_agent at
+        the same memory resumes the conversation with the new model. Sampling
+        and reasoning settings travel with the model entry in models.json.
+        """
+
+        # a turn still streaming belongs to the model being replaced
+        for worker in self.workers:
+            if worker.is_running and worker.group == "turn":
+                worker.cancel()
+
+        model = build_model(selector)
+        providers = load_models()
+        entry = next(
+            m for p in providers.values() for m in p.models if f"{p.name}/{m.id}" == selector
+        )
+        self.model = model
+        self.model_entry = entry
+        self.model_provider = selector.split("/", 1)[0]
+        self.agent = build_agent(
+            model,
+            self.memory,
+            self.mcp_tools,
+        )
+        self.status.context_window = await self.context_window()
+        self.status.model_label = f"{self.model_provider}/{self.model_entry.id}"
+        # refresh the header line
+        self.query_one("#chrome", Static).update(f"llm-tui   [dim]{model.model_name}[/dim]")
 
     async def start_new_thread(self) -> None:
         """Point at a fresh thread and drop everything describing the old one.
@@ -1009,7 +1187,8 @@ class LlmTui(App):
                 row = await turn.add_tool(call["id"], call["name"], call.get("args"))
                 row.resolve(results.get(call["id"]), None, timed=False)
             answer = "".join(
-                block.get("text", "") for block in message.content
+                block.get("text", "")
+                for block in message.content
                 if isinstance(block, dict) and block.get("type") == "text"
             )
             if answer.strip():

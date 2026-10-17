@@ -8,7 +8,6 @@ dependencies = [
     "langchain-community==0.4.2",
     "langgraph==1.2.11",
     "langchain-ollama==1.1.0",
-    "python-dotenv==1.2.3",
     "grandalf==0.8",
     "langgraph-checkpoint-sqlite==3.1.1",
     "langchain-milvus==0.4.0",
@@ -18,8 +17,22 @@ dependencies = [
     "tqdm==4.70.0",
     "textual==8.2.8",
     "langchain-mcp-adapters==0.3.2",
+    "langchain-openai==1.7.2",
 ]
 
 [tool.uv]
 # Flat layout: app.py / scripts/ are run directly, nothing to build or install.
 package = false
+
+[dependency-groups]
+dev = ["ruff==0.17.1", "mdformat==1.0.0"]
+
+[tool.ruff]
+line-length = 96
+
+target-version = "py312"
+
+[tool.ruff.format]
+# docstrings and comments are prose; the formatter leaves them alone and the
+# width rule for them lives in AGENT.md instead
+
