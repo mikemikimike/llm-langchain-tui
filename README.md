@@ -1,6 +1,6 @@
-Langchain practice with self-hosted model through ollama using `python3.12.13`
+Langchain practice with self-hosted model through ollama using `python3.12`
 
-Recommended installation method is python venvs via `python3.12 -m venv .venv` to keep `pip` packages clean
+Dependencies are managed with [`uv`](https://docs.astral.sh/uv/); after cloning, run `uv sync` to create `.venv` and install the pinned deps, then run things through `uv run`.
 
 Most constants and hyperparameters are defined in `.env`. paths in `.env` are relative to the project root and resolved against it in
 `config.py`, so scripts run the same from any directory.
@@ -26,7 +26,7 @@ more parameters (inside .env) injected through python
 ## running it
 
 ```
-python app.py                               # the chat TUI
-python scripts/ingest.py <pdf_dir>          # build the vector store
-python scripts/inspect_context.py           # dump a thread's context as html
+uv run python app.py                        # the chat TUI
+uv run python scripts/ingest.py <pdf_dir>   # build the vector store
+uv run python scripts/inspect_context.py    # dump a thread's context as html
 ```
