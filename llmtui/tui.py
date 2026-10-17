@@ -17,27 +17,30 @@ import time
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.utils.uuid import uuid7
 from langgraph.types import Command
-
 from rich.syntax import Syntax
-
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.message import Message
 from textual.containers import Vertical, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Collapsible, Input, Markdown, OptionList, SelectionList, Static, TextArea,
+    Collapsible,
+    Input,
+    Markdown,
+    OptionList,
+    SelectionList,
+    Static,
+    TextArea,
 )
 
 from llmtui import config
 from llmtui.agent import build_agent, build_model
-from llmtui.models_config import ModelEntry, load_models
+from llmtui.models_config import load_models
 from llmtui.naming import name_session_if_unnamed
 from llmtui.sessions import delete_session, list_sessions, set_session_title
-from llmtui.tools.mcp import MCPStatus, WRITE_TOOLS, tool_text
+from llmtui.tools.mcp import WRITE_TOOLS, MCPStatus, tool_text
 from llmtui.writes import WritePreview, preview_write
-
 
 SPINNER: str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # how many blocks wide the context meter is drawn
@@ -275,8 +278,15 @@ class DiffScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         body = Static(classes="diff-body")
         if self.preview.diff:
-            body.update(Syntax(self.preview.diff, "diff", word_wrap=True,
-                               theme="ansi_dark", background_color="default"))
+            body.update(
+                Syntax(
+                    self.preview.diff,
+                    "diff",
+                    word_wrap=True,
+                    theme="ansi_dark",
+                    background_color="default",
+                )
+            )
         else:
             body.update(self.preview.note or "(nothing to show)")
         yield Vertical(
@@ -431,8 +441,9 @@ class PromptArea(TextArea):
 class StatusBar(Static):
     """State, model, context pressure, generation speed and the MCP servers."""
 
-    def __init__(self, mcp_status: MCPStatus, context_window: int = 0,
-                 model_label: str = "") -> None:
+    def __init__(
+        self, mcp_status: MCPStatus, context_window: int = 0, model_label: str = ""
+    ) -> None:
         super().__init__(id="status")
         self.state = "ready"
         # provider/model shown next to the context usage; swap_model updates it
@@ -467,8 +478,7 @@ class StatusBar(Static):
             label = f"mcp [{colour}]{len(live)}/{len(servers)}[/]"
         else:
             label = "mcp " + " ".join(
-                f"[$success]{name}[/]" if failed is None
-                else f"[$error]{name} ({failed})[/]"
+                f"[$success]{name}[/]" if failed is None else f"[$error]{name} ({failed})[/]"
                 for name, failed in servers.items()
             )
 
@@ -575,7 +585,7 @@ class ModelPicker(ModalScreen[str | None]):
 
     def __init__(self, entries, current: str) -> None:
         super().__init__()
-        self.entries = entries                      # (selector, label) rows
+        self.entries = entries  # (selector, label) rows
         self.current = current
 
     def compose(self) -> ComposeResult:
@@ -653,9 +663,18 @@ class LlmTui(App):
         ("ctrl+l", "clear", "clear transcript"),
     ]
 
-    def __init__(self, agent, model, memory, mcp_tools, entry,
-                 sqlite_connection, agent_thread_config,
-                 mcp_status: MCPStatus, note_reader=None) -> None:
+    def __init__(
+        self,
+        agent,
+        model,
+        memory,
+        mcp_tools,
+        entry,
+        sqlite_connection,
+        agent_thread_config,
+        mcp_status: MCPStatus,
+        note_reader=None,
+    ) -> None:
         super().__init__()
         self.agent = agent
         self.model = model
@@ -690,6 +709,7 @@ class LlmTui(App):
         if provider is None:
             return 0
         from llmtui.models_config import fetch_context_window
+
         return await fetch_context_window(self.model_entry, provider)
 
     # ---------- layout ----------
@@ -701,8 +721,12 @@ class LlmTui(App):
         # CSS are docked to the bottom. we do a hard split here and each are
         # bottoming their own containers. nothing a 30 minute debug sidetracking cant fix :')
         with Vertical(id="footer"):
-            yield PromptArea(placeholder="ask about the library, or /help",
-                             soft_wrap=True, highlight_cursor_line=False, id="prompt")
+            yield PromptArea(
+                placeholder="ask about the library, or /help",
+                soft_wrap=True,
+                highlight_cursor_line=False,
+                id="prompt",
+            )
             yield StatusBar(
                 self.mcp_status,
                 model_label=f"{self.model_provider}/{self.model_entry.id}",
@@ -765,7 +789,9 @@ class LlmTui(App):
             # ask, resume, and again until it stops without asking
             while True:
                 stream = await self.agent.astream_events(
-                    payload, config=self.agent_thread_config, version="v3",
+                    payload,
+                    config=self.agent_thread_config,
+                    version="v3",
                 )
                 await asyncio.gather(
                     self._pump_messages(stream, turn),
@@ -795,7 +821,8 @@ class LlmTui(App):
         self.status.set_state("naming")
         try:
             await name_session_if_unnamed(
-                self.agent, self.model, self.sqlite_connection, self.agent_thread_config)
+                self.agent, self.model, self.sqlite_connection, self.agent_thread_config
+            )
         except Exception:
             # a failed title is not worth losing the turn over
             pass
@@ -812,9 +839,9 @@ class LlmTui(App):
         detail = f"✕ {type(exc).__name__}: {exc}"
 
         try:
-            messages = (
-                await self.agent.aget_state(self.agent_thread_config)
-            ).values["messages"]
+            messages = (await self.agent.aget_state(self.agent_thread_config)).values[
+                "messages"
+            ]
         except Exception:
             return detail
 
@@ -831,9 +858,11 @@ class LlmTui(App):
         asked = ", ".join(
             f"{call['name']} on {call['args'].get('path') or '?'}" for call in writes
         )
-        return (f"{detail}\n"
-                f"   this broke while setting up {asked}\n"
-                f"   the vault was not touched -- nothing runs before you approve it")
+        return (
+            f"{detail}\n"
+            f"   this broke while setting up {asked}\n"
+            f"   the vault was not touched -- nothing runs before you approve it"
+        )
 
     async def _review_writes(self, interrupts, turn: AssistantTurn) -> list[dict]:
         """One card at a time, and one decision back for each write asked about.
@@ -887,11 +916,14 @@ class LlmTui(App):
         if not wanted:
             return []
 
-        return [{
-            "type": "reject",
-            "message": "The turn was interrupted before this was approved, "
-                       "so it was not run. Ask again if it is still wanted.",
-        } for _ in range(wanted)]
+        return [
+            {
+                "type": "reject",
+                "message": "The turn was interrupted before this was approved, "
+                "so it was not run. Ask again if it is still wanted.",
+            }
+            for _ in range(wanted)
+        ]
 
     async def _pump_messages(self, stream, turn: AssistantTurn) -> None:
         """Reasoning and answer deltas, in the shape the sync renderer used."""
@@ -989,7 +1021,8 @@ class LlmTui(App):
                 "/list    every conversation so far\n"
                 "/name    title this conversation\n"
                 "/load    resume a conversation\n"
-                "/delete  remove conversations, this one included")
+                "/delete  remove conversations, this one included"
+            )
 
         elif command == "new":
             await self.start_new_thread()
@@ -997,7 +1030,9 @@ class LlmTui(App):
 
         elif command == "list":
             lines = []
-            for i, (thread_id, title, updated_at) in enumerate(list_sessions(self.sqlite_connection), start=1):
+            for i, (thread_id, title, updated_at) in enumerate(
+                list_sessions(self.sqlite_connection), start=1
+            ):
                 mark = "[b]›[/b]" if thread_id == current else " "
                 lines.append(f"{mark} {i}. {title or '(untitled)'}  [dim]{updated_at}[/dim]")
             await self._note("\n".join(lines) or "no sessions yet")
@@ -1028,7 +1063,8 @@ class LlmTui(App):
                 return
             entries = [
                 (f"{p.name}/{m.id}", f"{m.id}  [dim]· {p.name}[/]")
-                for p in providers.values() for m in p.models
+                for p in providers.values()
+                for m in p.models
             ]
             current = f"{self.model_provider}/{self.model.model_name}"
             selector = await self.push_screen_wait(ModelPicker(entries, current))
@@ -1056,7 +1092,8 @@ class LlmTui(App):
                     await self.start_new_thread()
                     await self._note(
                         f"deleted {len(doomed)} session(s), including this one — "
-                        f"started a new conversation")
+                        f"started a new conversation"
+                    )
                 else:
                     await self._note(f"deleted {len(doomed)} session(s)")
 
@@ -1086,20 +1123,21 @@ class LlmTui(App):
 
         model = build_model(selector)
         providers = load_models()
-        entry = next(m for p in providers.values() for m in p.models
-                     if f"{p.name}/{m.id}" == selector)
+        entry = next(
+            m for p in providers.values() for m in p.models if f"{p.name}/{m.id}" == selector
+        )
         self.model = model
         self.model_entry = entry
         self.model_provider = selector.split("/", 1)[0]
         self.agent = build_agent(
-            model, self.memory, self.mcp_tools,
+            model,
+            self.memory,
+            self.mcp_tools,
         )
         self.status.context_window = await self.context_window()
         self.status.model_label = f"{self.model_provider}/{self.model_entry.id}"
         # refresh the header line
-        self.query_one("#chrome", Static).update(
-            f"llm-tui   [dim]{model.model_name}[/dim]"
-        )
+        self.query_one("#chrome", Static).update(f"llm-tui   [dim]{model.model_name}[/dim]")
 
     async def start_new_thread(self) -> None:
         """Point at a fresh thread and drop everything describing the old one.
@@ -1149,7 +1187,8 @@ class LlmTui(App):
                 row = await turn.add_tool(call["id"], call["name"], call.get("args"))
                 row.resolve(results.get(call["id"]), None, timed=False)
             answer = "".join(
-                block.get("text", "") for block in message.content
+                block.get("text", "")
+                for block in message.content
                 if isinstance(block, dict) and block.get("type") == "text"
             )
             if answer.strip():

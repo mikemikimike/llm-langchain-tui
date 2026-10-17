@@ -23,3 +23,16 @@ dependencies = [
 [tool.uv]
 # Flat layout: app.py / scripts/ are run directly, nothing to build or install.
 package = false
+
+[dependency-groups]
+dev = ["ruff==0.17.1", "mdformat==1.0.0"]
+
+[tool.ruff]
+line-length = 96
+
+target-version = "py312"
+
+[tool.ruff.format]
+# docstrings and comments are prose; the formatter leaves them alone and the
+# width rule for them lives in AGENT.md instead
+

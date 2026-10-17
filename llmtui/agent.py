@@ -2,22 +2,24 @@
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
-    HumanInTheLoopMiddleware, ToolCallLimitMiddleware, ToolErrorMiddleware,
+    HumanInTheLoopMiddleware,
+    ToolCallLimitMiddleware,
+    ToolErrorMiddleware,
 )
-
 from langchain_core.tools.base import BaseTool
-
 from langgraph.graph.state import CompiledStateGraph
 
 from llmtui.config import MAX_TOOL_CALLS, SYSTEM_PROMPT_PATH
-from llmtui.models_config import (
-    ModelEntry, Provider, build_chat_model, flatten, load_models,
-)
 from llmtui.middleware import repair_tool_calls, route_tool_error
+from llmtui.models_config import (
+    build_chat_model,
+    flatten,
+    load_models,
+)
 from llmtui.tools import TOOLS
 from llmtui.tools.mcp import WRITE_TOOLS
 
-with open(SYSTEM_PROMPT_PATH, 'r') as f:
+with open(SYSTEM_PROMPT_PATH, "r") as f:
     SYSTEM_PROMPT: str = f.read()
 
 
@@ -31,8 +33,7 @@ def build_model(selector: str | None = None):
 
     providers = load_models()
     if selector is None:
-        return build_chat_model(flatten(providers)[0],
-                                next(iter(providers.values())))
+        return build_chat_model(flatten(providers)[0], next(iter(providers.values())))
     provider_name, model_id = selector.split("/", 1)
     provider = providers.get(provider_name)
     if provider is None:
@@ -43,11 +44,8 @@ def build_model(selector: str | None = None):
     return build_chat_model(entry, provider)
 
 
-def build_agent(
-    model, checkpointer, mcp_tools: list[BaseTool]
-) -> CompiledStateGraph:
-    """Assemble the graph out of parts. The MCP tools are fetched by the caller.
-    """
+def build_agent(model, checkpointer, mcp_tools: list[BaseTool]) -> CompiledStateGraph:
+    """Assemble the graph out of parts. The MCP tools are fetched by the caller."""
 
     mcp_names = {tool.name for tool in mcp_tools}
 
@@ -68,26 +66,23 @@ def build_agent(
 
     return create_agent(
         model=model,
-        tools=TOOLS+mcp_tools,
+        tools=TOOLS + mcp_tools,
         # after_model hooks run in reverse list order: repair_tool_calls first,
         # then the call limit, then the approval gate last -- so the gate only
         # ever sees repaired calls the limit already let through. the tool-error
         # wrapper runs around the tool node, after all of them
-        middleware=approval + [
-            ToolCallLimitMiddleware(
-                tool_name="search_books",
-                run_limit=MAX_TOOL_CALLS
-            ),
+        middleware=approval
+        + [
+            ToolCallLimitMiddleware(tool_name="search_books", run_limit=MAX_TOOL_CALLS),
             # one middleware for all types tool, so we need a on_error trigger
             # that can facilitate for all types of errors
             ToolErrorMiddleware(
-                on_error=route_tool_error(mcp_names),
-                tools=["search_books", *mcp_names]
+                on_error=route_tool_error(mcp_names), tools=["search_books", *mcp_names]
             ),
             # after_model custom middleware to fix malformed tool calls
             # https://docs.langchain.com/oss/python/langchain/middleware/custom#node-style-hooks
             # i am so proud of this one
-            repair_tool_calls
+            repair_tool_calls,
         ],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=checkpointer,

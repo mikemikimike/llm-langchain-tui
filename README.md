@@ -1,35 +1,60 @@
-Langchain practice: a chat agent behind a Textual TUI, running on any
-OpenAI-compatible model endpoint (Ollama locally, or a remote API) using
-`python3.12`
+# llm-tui
 
-Dependencies are managed with [`uv`](https://docs.astral.sh/uv/); after cloning, run `uv sync` to create `.venv` and install the pinned deps, then run things through `uv run`.
+Langchain practice: a chat agent behind a Textual TUI, running on any OpenAI-compatible
+model endpoint — Ollama locally, or a remote API — on python 3.12.
 
-Configuration lives in `config/`, gitignored and copied from committed
-examples:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). After cloning:
 
-- `config/config.json` (from `config.example.json`) — app settings: paths,
-  milvus index options, obsidian key/cert. Paths are relative to the project
-  root and resolved in `config.py`, so scripts run the same from any
-  directory. A bad file fails at import naming the offending key.
-- `config/models.json` (from `models.example.json`) — providers and models,
-  pi-harness style. Any OpenAI-compatible endpoint (ollama, llama.cpp server,
-  vLLM, LM Studio, remote APIs) is a JSON entry; no code changes. Sampling
-  params (`temperature`, `top_k`, ...) are per model and sent through
-  verbatim. `"$ENV_VAR"` in any string reads from the environment. `/model`
-  in the TUI switches between entries and re-reads the file on every open.
-
-`ingest.py` to build vector db for retrieval. db is built into a dev_db first. to migrate dev milvus db to prod:
-
-```
--rf milvus_prod.db && cp -r milvus_dev.db milvus_prod.db
+```sh
+uv sync                    # creates .venv, installs the pinned deps
+cp config/config.example.json config/config.json    # app settings
+cp config/models.example.json config/models.json    # providers + models
 ```
 
-embeddings are still ollama-bound (`EMBEDDING_MODEL` in `config/config.json`).
+## configuration
+
+Both config files are gitignored — the committed `*.example.json` files are the
+templates. Paths inside them are relative to the project root and resolved in
+`llmtui/config.py`, so scripts run the same from any directory. A bad file fails at
+import, naming the offending key.
+
+`config/config.json` — app settings: sqlite/milvus db paths, milvus index options, the
+obsidian api key and cert, agent behaviour (`max_tool_calls`, `display_thinking`), and
+`embedding_model` for ingest.
+
+`config/models.json` — providers and models, pi-harness style. Any OpenAI-compatible
+endpoint (ollama, llama.cpp server, vLLM, LM Studio, remote apis) is just a JSON entry;
+no code changes. Sampling params (`temperature`, `top_k`, ...) are per model and sent
+through to the server verbatim. `"$ENV_VAR"` in any string reads from the environment.
+`/model` in the TUI switches between entries; the file is re-read every time the picker
+opens, so edits land without a restart.
+
+## models and providers
+
+ollama locally: pull models through `ollama run` and point a provider entry at
+`http://localhost:11434/v1`. the context meter picks up the model's real context length
+from ollama automatically; other servers should declare `contextWindow` on the entry.
+
+remote: entries point at whatever speaks the openai chat-completions dialect. reasoning
+models get `reasoning_effort` from their `reasoning` field.
 
 ## running it
 
-```
+```sh
 uv run python app.py                        # the chat TUI
 uv run python scripts/ingest.py <pdf_dir>   # build the vector store
 uv run python scripts/inspect_context.py    # dump a thread's context as html
 ```
+
+slash commands in the TUI: `/help`, `/model`, `/name`, `/load`, `/new`, `/delete`.
+
+## rag / ingest
+
+`ingest.py` builds a hybrid (dense + bm25) milvus index from a directory of PDFs into
+the dev db. promote to prod by copying over it:
+
+```
+rf milvus_prod.db && cp -r milvus_dev.db milvus_prod.db
+```
+
+embeddings are still ollama-bound (`embedding_model` in `config/config.json`).

@@ -4,7 +4,6 @@ import asyncio
 import warnings
 
 from langchain_core.utils.uuid import uuid7
-
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from llmtui.agent import build_agent, build_model
@@ -15,10 +14,7 @@ from llmtui.tools.mcp import MCPStatus, get_mcp_tools, vault_reader
 from llmtui.tui import LlmTui
 
 # announces that its beta, so we shush it
-warnings.filterwarnings(
-    "ignore",
-    message=".*v3 streaming protocol on Pregel is experimental.*"
-)
+warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
 
 
 async def main_async() -> None:
@@ -48,15 +44,18 @@ async def main_async() -> None:
 
         agent = build_agent(model, memory, mcp_tools)
 
-        agent_thread_config = {
-            "configurable": {
-                "thread_id": str(uuid7())
-            }
-        }
+        agent_thread_config = {"configurable": {"thread_id": str(uuid7())}}
 
         await LlmTui(
-            agent, model, memory, mcp_tools, entry, sqlite_connection,
-            agent_thread_config, mcp_status, note_reader
+            agent,
+            model,
+            memory,
+            mcp_tools,
+            entry,
+            sqlite_connection,
+            agent_thread_config,
+            mcp_status,
+            note_reader,
         ).run_async()
 
 

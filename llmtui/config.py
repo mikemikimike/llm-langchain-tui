@@ -23,9 +23,7 @@ from pathlib import Path
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 # overridable so tests can point at their own config
-CONFIG_PATH: Path = Path(
-    os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config" / "config.json")
-)
+CONFIG_PATH: Path = Path(os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config" / "config.json"))
 
 
 def _load() -> dict:
@@ -69,7 +67,9 @@ def _int(section: dict, key: str) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
-        raise RuntimeError(f"{CONFIG_PATH}: {key!r} must be a whole number, got {value!r}") from None
+        raise RuntimeError(
+            f"{CONFIG_PATH}: {key!r} must be a whole number, got {value!r}"
+        ) from None
 
 
 # paths

@@ -23,9 +23,7 @@ from pathlib import Path
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 # overridable so tests can point at their own file
-MODELS_PATH: Path = Path(
-    os.getenv("LLMTUI_MODELS", PROJECT_ROOT / "config" / "models.json")
-)
+MODELS_PATH: Path = Path(os.getenv("LLMTUI_MODELS", PROJECT_ROOT / "config" / "models.json"))
 
 # the one dialect implemented; see build_chat_model
 SUPPORTED_APIS = ("openai-completions",)
@@ -36,11 +34,24 @@ _ENV_REF = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$"
 # the entry itself (model, reasoning) or by the caller (the conversation).
 # sampling params should shape generation, never redirect or reshape the
 # request; a collision here is far more likely a mistake than an intent
-RESERVED_REQUEST_FIELDS = frozenset({
-    "model", "messages", "reasoning", "reasoning_effort", "tools",
-    "tool_choice", "response_format", "stream", "stream_options",
-    "max_tokens", "max_completion_tokens", "n", "stop", "user",
-})
+RESERVED_REQUEST_FIELDS = frozenset(
+    {
+        "model",
+        "messages",
+        "reasoning",
+        "reasoning_effort",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "stream",
+        "stream_options",
+        "max_tokens",
+        "max_completion_tokens",
+        "n",
+        "stop",
+        "user",
+    }
+)
 
 # Authorization is a header: control characters (CRLF and friends) would be
 # rejected deep inside httpx at first request; fail here instead, where the
@@ -212,7 +223,10 @@ def load_models(path: Path | None = None) -> dict[str, Provider]:
             models.append(entry)
 
         providers[name] = Provider(
-            name=name, base_url=base_url, api=api, api_key=api_key,
+            name=name,
+            base_url=base_url,
+            api=api,
+            api_key=api_key,
             models=tuple(models),
         )
     return providers
@@ -228,6 +242,7 @@ def flatten(providers: dict[str, Provider]) -> list[ModelEntry]:
 # the dialect. one function, one api; a new dialect means a new branch in
 # here, not a change anywhere else in the codebase
 # ---------------------------------------------------------------------
+
 
 def _reasoning_effort(entry: ModelEntry):
     if entry.reasoning is None:
@@ -248,9 +263,7 @@ def build_chat_model(entry: ModelEntry, provider: Provider):
     """
 
     if provider.api != "openai-completions":
-        raise RuntimeError(
-            f"no builder for api {provider.api!r} (provider {provider.name!r})"
-        )
+        raise RuntimeError(f"no builder for api {provider.api!r} (provider {provider.name!r})")
 
     from langchain_openai import ChatOpenAI
 
@@ -276,6 +289,7 @@ def build_chat_model(entry: ModelEntry, provider: Provider):
 # into the run
 # ---------------------------------------------------------------------
 
+
 async def fetch_context_window(entry: ModelEntry, provider: Provider) -> int:
     """Ask the server how long the context is. 0 when it cannot say.
 
@@ -292,8 +306,7 @@ async def fetch_context_window(entry: ModelEntry, provider: Provider) -> int:
 
     # http://localhost:11434/v1 -> http://localhost:11434
     native = provider.base_url.rstrip("/")
-    if native.endswith("/v1"):
-        native = native[: -len("/v1")]
+    native = native.removesuffix("/v1")
 
     try:
         async with httpx.AsyncClient(timeout=5) as client:
