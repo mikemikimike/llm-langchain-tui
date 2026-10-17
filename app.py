@@ -9,6 +9,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from llmtui.agent import build_agent, build_model
 from llmtui.config import SQLITE_DB_PATH
+from llmtui.models_config import flatten, load_models
 from llmtui.sessions import connect
 from llmtui.tools.mcp import MCPStatus, get_mcp_tools, vault_reader
 from llmtui.tui import LlmTui
@@ -23,7 +24,9 @@ warnings.filterwarnings(
 async def main_async() -> None:
     sqlite_connection = connect()
 
-    model = build_model()
+    # first entry of models.json is the default: file order is preference
+    entry = flatten(load_models())[0]
+    model = build_model(f"{entry.provider}/{entry.id}")
 
     # the graph is driven with astream_events, and the plain SqliteSaver raises
     # NotImplementedError on every async checkpoint call, so the saver has to be
@@ -52,8 +55,8 @@ async def main_async() -> None:
         }
 
         await LlmTui(
-            agent, model, sqlite_connection, agent_thread_config, mcp_status,
-            note_reader
+            agent, model, memory, mcp_tools, entry, sqlite_connection,
+            agent_thread_config, mcp_status, note_reader
         ).run_async()
 
 

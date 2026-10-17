@@ -61,6 +61,9 @@ class ModelEntry:
     # free-form request fields, merged into the request body verbatim;
     # core does not interpret these
     sampling_params: dict | None = None
+    # advertised context window in tokens, for the status meter. metadata
+    # only -- nothing sends it anywhere
+    context_window: int = 0
 
 
 @dataclass(frozen=True)
@@ -142,11 +145,18 @@ def _parse_model(raw, provider: str, base_url: str, path: str) -> ModelEntry:
             for key, value in sampling.items()
         }
 
+    context_window = raw.get("contextWindow", 0)
+    if not isinstance(context_window, int) or context_window < 0:
+        raise RuntimeError(
+            f"{path}: {where} {model_id!r} 'contextWindow' must be a non-negative integer"
+        )
+
     return ModelEntry(
         provider=provider,
         id=model_id,
         reasoning=reasoning,
         sampling_params=sampling,
+        context_window=context_window,
     )
 
 

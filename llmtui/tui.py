@@ -31,6 +31,8 @@ from textual.widgets import (
 )
 
 from llmtui import config
+from llmtui.agent import build_agent, build_model
+from llmtui.models_config import ModelEntry, load_models
 from llmtui.naming import name_session_if_unnamed
 from llmtui.sessions import delete_session, list_sessions, set_session_title
 from llmtui.tools.mcp import MCPStatus, WRITE_TOOLS, tool_text
@@ -427,11 +429,14 @@ class PromptArea(TextArea):
 
 
 class StatusBar(Static):
-    """State, context pressure, generation speed and the MCP servers."""
+    """State, model, context pressure, generation speed and the MCP servers."""
 
-    def __init__(self, mcp_status: MCPStatus, context_window: int = 0) -> None:
+    def __init__(self, mcp_status: MCPStatus, context_window: int = 0,
+                 model_label: str = "") -> None:
         super().__init__(id="status")
         self.state = "ready"
+        # provider/model shown next to the context usage; swap_model updates it
+        self.model_label = model_label
         self.ctx_used = 0
         # filled in only when the provider reports its context length; 0 keeps
         # the meter a plain token count (see refresh_line)
@@ -471,6 +476,8 @@ class StatusBar(Static):
 
     def refresh_line(self) -> None:
         parts = [f"[b]{self.state}[/b]"]
+        if self.model_label:
+            parts.append(f"[dim]{self.model_label}[/dim]")
         if self.ctx_used:
             # context_window arrives filled in only when the provider said how
             # big it is (step 5 of SPEC-provider-migration.md). without it the
@@ -554,6 +561,46 @@ class SessionPicker(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ModelPicker(ModalScreen[str | None]):
+    """Pick a model. Returns its "provider/model" selector.
+
+    models.json is reloaded here, on every open, so edits to the file show
+    up without restarting the app (pi parity). The swap itself is cheap:
+    the graph holds no history -- that lives in the checkpointer keyed by
+    thread_id -- so a new graph over the same memory resumes the same
+    conversation. Reasoning/sampling params travel with the model entry.
+    """
+
+    BINDINGS = [("escape", "cancel", "cancel")]
+
+    def __init__(self, entries, current: str) -> None:
+        super().__init__()
+        self.entries = entries                      # (selector, label) rows
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        rows = []
+        for selector, label in self.entries:
+            here = "  ·  current" if selector == self.current else ""
+            rows.append(f"{label}{here}")
+        yield Vertical(
+            Static("switch model", classes="modal-title"),
+            OptionList(*rows, id="picker"),
+            Static("enter switch · esc cancel", classes="modal-hint"),
+            classes="modal",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#picker", OptionList).focus()
+
+    @on(OptionList.OptionSelected, "#picker")
+    def chosen(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self.entries[event.option_index][0])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SessionDeleter(ModalScreen[list[str] | None]):
     """Tick sessions to remove, the current one included.
 
@@ -606,11 +653,18 @@ class LlmTui(App):
         ("ctrl+l", "clear", "clear transcript"),
     ]
 
-    def __init__(self, agent, model, sqlite_connection, agent_thread_config,
+    def __init__(self, agent, model, memory, mcp_tools, entry,
+                 sqlite_connection, agent_thread_config,
                  mcp_status: MCPStatus, note_reader=None) -> None:
         super().__init__()
         self.agent = agent
         self.model = model
+        # kept for switch_model: a new graph over the same memory and the same
+        # tools resumes the same thread with the new model
+        self.memory = memory
+        self.mcp_tools = mcp_tools
+        self.model_entry = entry
+        self.model_provider = entry.provider
         self.sqlite_connection = sqlite_connection
         self.agent_thread_config = agent_thread_config
         self.mcp_status = mcp_status
@@ -621,13 +675,15 @@ class LlmTui(App):
         self._out_chars = 0
 
     def context_window(self) -> int:
-        """Context length as the provider reports it, 0 when it does not.
+        """Context length the provider reports, 0 when it does not.
 
-        Filled in by step 5 of SPEC-provider-migration.md; until then every
-        provider reports 0 and the meter stays a plain token count.
+        Today: the contextWindow metadata on the model entry, which the file
+        should carry for every remote provider. Step 5 of
+        SPEC-provider-migration.md replaces the fallback with a live provider
+        query for servers that can say but are not declared here.
         """
 
-        return 0
+        return self.model_entry.context_window
 
     # ---------- layout ----------
 
@@ -640,7 +696,10 @@ class LlmTui(App):
         with Vertical(id="footer"):
             yield PromptArea(placeholder="ask about the library, or /help",
                              soft_wrap=True, highlight_cursor_line=False, id="prompt")
-            yield StatusBar(self.mcp_status, context_window=self.context_window())
+            yield StatusBar(
+                self.mcp_status, context_window=self.context_window(),
+                model_label=f"{self.model_provider}/{self.model_entry.id}",
+            )
 
     def on_mount(self) -> None:
         self.transcript = self.query_one("#transcript", VerticalScroll)
@@ -949,6 +1008,28 @@ class LlmTui(App):
                 self.agent_thread_config["configurable"]["thread_id"] = thread_id
                 await self.reload_transcript()
 
+        elif command == "model":
+            # models.json is read now, at open, never at launch: edits to the
+            # file land in the very next /model
+            try:
+                providers = load_models()
+            except RuntimeError as exc:
+                await self._note(f"✕ models.json: {exc}", failed=True)
+                return
+            entries = [
+                (f"{p.name}/{m.id}", f"{m.id}  [dim]· {p.name}[/]")
+                for p in providers.values() for m in p.models
+            ]
+            current = f"{self.model_provider}/{self.model.model_name}"
+            selector = await self.push_screen_wait(ModelPicker(entries, current))
+            if selector and selector != current:
+                try:
+                    await self.switch_model(selector)
+                except RuntimeError as exc:
+                    await self._note(f"✕ {exc}", failed=True)
+                else:
+                    await self._note(f"model switched to {selector}")
+
         elif command == "delete":
             sessions = list_sessions(self.sqlite_connection)
             if not sessions:
@@ -978,6 +1059,37 @@ class LlmTui(App):
         classes = "turn note failed" if failed else "turn note"
         await self.transcript.mount(Static(text, classes=classes))
         self.transcript.anchor()
+
+    async def switch_model(self, selector: str) -> None:
+        """Rebuild the graph over a new model, same memory, same thread.
+
+        The graph itself carries no conversation state -- history lives in the
+        checkpointer keyed by thread_id -- so pointing a fresh build_agent at
+        the same memory resumes the conversation with the new model. Sampling
+        and reasoning settings travel with the model entry in models.json.
+        """
+
+        # a turn still streaming belongs to the model being replaced
+        for worker in self.workers:
+            if worker.is_running and worker.group == "turn":
+                worker.cancel()
+
+        model = build_model(selector)
+        providers = load_models()
+        entry = next(m for p in providers.values() for m in p.models
+                     if f"{p.name}/{m.id}" == selector)
+        self.model = model
+        self.model_entry = entry
+        self.model_provider = selector.split("/", 1)[0]
+        self.agent = build_agent(
+            model, self.memory, self.mcp_tools,
+        )
+        self.status.context_window = self.context_window()
+        self.status.model_label = f"{self.model_provider}/{self.model_entry.id}"
+        # refresh the header line
+        self.query_one("#chrome", Static).update(
+            f"llm-tui   [dim]{model.model_name}[/dim]"
+        )
 
     async def start_new_thread(self) -> None:
         """Point at a fresh thread and drop everything describing the old one.
