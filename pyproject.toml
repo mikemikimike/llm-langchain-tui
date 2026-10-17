@@ -28,9 +28,17 @@ package = false
 dev = ["ruff==0.17.1", "mdformat==1.0.0"]
 
 [tool.ruff]
-line-length = 96
+line-length = 88
 
 target-version = "py312"
+
+[tool.ruff.lint]
+# deliberate codebase patterns, not oversights:
+# - BLE001: broad excepts in middleware/error routing and the mcp layer
+# - S110:   try/except-pass around optional notification teardown
+# - RUF012: mutable class attrs used as textual/langchain class-level state
+# - TRY004: loaders raise RuntimeError for operator-facing config errors
+ignore = ["BLE001", "S110", "RUF012", "TRY004"]
 
 [tool.ruff.format]
 # docstrings and comments are prose; the formatter leaves them alone and the

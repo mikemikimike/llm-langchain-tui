@@ -38,23 +38,24 @@ def is_session_named(sqlite_connection, thread_id: str) -> bool:
 
 
 def delete_session(sqlite_connection, thread_id: str) -> None:
-    sqlite_connection.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+    sqlite_connection.execute(
+        "DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,)
+    )
     sqlite_connection.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
     sqlite_connection.execute("DELETE FROM sessions WHERE thread_id = ?", (thread_id,))
     sqlite_connection.commit()
 
 
-def set_session_title(sqlite_connection, thread_id:str, title:str) -> None:
-    sqlite_connection.execute("""
+def set_session_title(sqlite_connection, thread_id: str, title: str) -> None:
+    sqlite_connection.execute(
+        """
         INSERT INTO sessions (thread_id, title, updated_at)
         VALUES (?, ?, datetime('now'))
         ON CONFLICT(thread_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at
         """,
-        (thread_id, title)
+        (thread_id, title),
     )
     sqlite_connection.commit()
-
-    return
 
 
 def list_sessions(sqlite_connection):

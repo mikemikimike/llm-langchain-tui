@@ -23,7 +23,9 @@ from pathlib import Path
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 # overridable so tests can point at their own config
-CONFIG_PATH: Path = Path(os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config" / "config.json"))
+CONFIG_PATH: Path = Path(
+    os.getenv("LLMTUI_CONFIG", PROJECT_ROOT / "config" / "config.json")
+)
 
 
 def _load() -> dict:

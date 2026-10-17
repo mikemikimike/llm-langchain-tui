@@ -17,17 +17,17 @@ self-contained -- styles inline, nothing fetched -- so it opens straight from
 disk in any browser, offline, with no server involved.
 """
 
-import os
-import re
-import sys
-import json
-import html
-import sqlite3
 import argparse
 import collections
+import html
+import json
+import os
+import re
+import sqlite3
+import sys
 from pathlib import Path
 
-from langchain.messages import AIMessage, HumanMessage, ToolMessage
+from langchain.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # this is run straight from a shell, so the project root has to go on the path
@@ -90,24 +90,31 @@ def load_threads(connection) -> list[dict]:
 
     saver = SqliteSaver(connection)
     threads = []
-    for (thread_id,) in connection.execute("SELECT DISTINCT thread_id FROM checkpoints").fetchall():
+    for (thread_id,) in connection.execute(
+        "SELECT DISTINCT thread_id FROM checkpoints"
+    ).fetchall():
         tup = saver.get_tuple({"configurable": {"thread_id": thread_id}})
         if not tup:
             continue
         messages = tup.checkpoint["channel_values"].get("messages", [])
-        threads.append({
-            "ts": tup.checkpoint.get("ts", ""),
-            "thread_id": thread_id,
-            "count": len(messages),
-            "title": thread_title(connection, thread_id),
-        })
+        threads.append(
+            {
+                "ts": tup.checkpoint.get("ts", ""),
+                "thread_id": thread_id,
+                "count": len(messages),
+                "title": thread_title(connection, thread_id),
+            }
+        )
     return threads
 
 
 def by_name(threads: list[dict]) -> list[dict]:
     """Alphabetical by session name, with the never-named ones after them."""
 
-    return sorted(threads, key=lambda t: (t["title"] is None, (t["title"] or t["thread_id"]).lower()))
+    return sorted(
+        threads,
+        key=lambda t: (t["title"] is None, (t["title"] or t["thread_id"]).lower()),
+    )
 
 
 def message_size(message) -> int:
@@ -131,32 +138,38 @@ def render_ai(message) -> list[str]:
         if kind == "reasoning":
             parts.append(
                 '<div class="blk reasoning"><div class="blk-label">reasoning block</div>'
-                f'<div class="prose dim">{e(block.get("reasoning", ""))}</div></div>')
+                f'<div class="prose dim">{e(block.get("reasoning", ""))}</div></div>'
+            )
         elif kind == "text":
             parts.append(
                 '<div class="blk"><div class="blk-label">text block</div>'
-                f'<div class="prose">{e(block.get("text", ""))}</div></div>')
+                f'<div class="prose">{e(block.get("text", ""))}</div></div>'
+            )
         elif kind == "tool_call":
             parts.append(
                 '<div class="blk call"><div class="blk-label">tool_call block</div>'
                 f'<div class="kv"><span>name</span><code>{e(block.get("name"))}</code>'
-                f'<span>id</span><code>{e(block.get("id"))}</code></div>'
-                f'<pre class="args">{e(json.dumps(block.get("args"), indent=2))}</pre></div>')
+                f"<span>id</span><code>{e(block.get('id'))}</code></div>"
+                f'<pre class="args">{e(json.dumps(block.get("args"), indent=2))}</pre></div>'
+            )
         elif kind == "invalid_tool_call":
             parts.append(
                 '<div class="blk bad"><div class="blk-label warn">invalid_tool_call block</div>'
                 f'<div class="kv"><span>error</span><code class="no">{e(block.get("error"))}</code></div>'
-                f'<pre class="args">{e(block.get("args"))}</pre></div>')
+                f'<pre class="args">{e(block.get("args"))}</pre></div>'
+            )
         else:
             parts.append(
                 f'<div class="blk"><div class="blk-label">{e(kind)} block</div>'
-                f'<pre>{e(json.dumps(block, default=str, indent=2))}</pre></div>')
+                f"<pre>{e(json.dumps(block, default=str, indent=2))}</pre></div>"
+            )
 
     # these two counters are what tell a dead turn from a working one
     valid, invalid = len(message.tool_calls), len(message.invalid_tool_calls)
     parts.append(
         f'<div class="kv"><span>.tool_calls</span><code class="{"ok" if valid else ""}">{valid}</code>'
-        f'<span>.invalid_tool_calls</span><code class="{"no" if invalid else "ok"}">{invalid}</code></div>')
+        f'<span>.invalid_tool_calls</span><code class="{"no" if invalid else "ok"}">{invalid}</code></div>'
+    )
     return parts
 
 
@@ -164,10 +177,12 @@ def render_tool(message) -> list[str]:
     """Tool results are split back into the passages the tool joined together."""
 
     parts = [
-        f'<div class="kv"><span>status</span>'
-        f'<code class="{"no" if message.status == "error" else "ok"}">{e(message.status)}</code>'
-        f'<span>tool</span><code>{e(message.name)}</code>'
-        f'<span>replies to</span><code>{e(message.tool_call_id)}</code></div>'
+        (
+            f'<div class="kv"><span>status</span>'
+            f'<code class="{"no" if message.status == "error" else "ok"}">{e(message.status)}</code>'
+            f"<span>tool</span><code>{e(message.name)}</code>"
+            f"<span>replies to</span><code>{e(message.tool_call_id)}</code></div>"
+        )
     ]
     passages = re.split(r"\n\n---\n\n", str(message.content))
     parts.append(f'<div class="blk-label">{len(passages)} passage(s) returned</div>')
@@ -175,7 +190,8 @@ def render_tool(message) -> list[str]:
         head, _, rest = passage.partition("\n")
         parts.append(
             f'<div class="passage"><div class="cite">{e(head)}</div>'
-            f'<pre>{e(rest)}</pre></div>')
+            f"<pre>{e(rest)}</pre></div>"
+        )
     return parts
 
 
@@ -191,8 +207,11 @@ def build_page(thread_id: str, messages: list) -> str:
         if isinstance(message, ToolMessage):
             retrieved |= set(re.findall(r"p\.(\d+)", str(message.content)))
         elif isinstance(message, AIMessage):
-            text = "".join(b.get("text", "") for b in message.content
-                           if isinstance(b, dict) and b.get("type") == "text")
+            text = "".join(
+                b.get("text", "")
+                for b in message.content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
             cited |= set(re.findall(r"p\.(\d+)", text))
     fabricated = cited - retrieved
 
@@ -202,7 +221,9 @@ def build_page(thread_id: str, messages: list) -> str:
         css, label = ROLE.get(kind, ("assistant", kind))
         if isinstance(message, AIMessage):
             body = render_ai(message)
-            types = ",".join(b.get("type", "?") for b in message.content if isinstance(b, dict))
+            types = ",".join(
+                b.get("type", "?") for b in message.content if isinstance(b, dict)
+            )
         elif isinstance(message, ToolMessage):
             body = render_tool(message)
             types = ""
@@ -214,23 +235,28 @@ def build_page(thread_id: str, messages: list) -> str:
             f'<article class="msg {css}"><header class="msg-head">'
             f'<span class="idx">{n}</span><span class="role">{label}</span>'
             f'<span class="meta">{e(kind)}{" &middot; " + e(types) if types else ""}'
-            f' &middot; {message_size(message):,} chars</span></header>'
-            f'{"".join(body)}</article>')
+            f" &middot; {message_size(message):,} chars</span></header>"
+            f"{''.join(body)}</article>"
+        )
 
     bar = "".join(
         f'<div class="seg {ROLE.get(k, ("assistant",))[0]}" style="width:{v / grand * 100:.2f}%"></div>'
-        for k, v in totals.items())
+        for k, v in totals.items()
+    )
     legend = "".join(
         f'<span class="lg"><i class="dot {ROLE.get(k, ("assistant",))[0]}"></i>'
-        f'{ROLE.get(k, (None, k))[1]} <b>{v / grand * 100:.0f}%</b> <em>{v:,}</em></span>'
-        for k, v in totals.items())
+        f"{ROLE.get(k, (None, k))[1]} <b>{v / grand * 100:.0f}%</b> <em>{v:,}</em></span>"
+        for k, v in totals.items()
+    )
 
     return TEMPLATE.format(
         thread_id=e(thread_id),
         # the first uuid segment is enough to tell pages apart in a gallery
         short_id=e(thread_id.split("-")[0]),
-        count=len(messages), grand=f"{grand:,}",
-        bar=bar, legend=legend,
+        count=len(messages),
+        grand=f"{grand:,}",
+        bar=bar,
+        legend=legend,
         retrieved=", ".join(sorted(retrieved, key=int)) or "none",
         cited=", ".join(sorted(cited, key=int)) or "none",
         fab_class="no" if fabricated else "pass",
@@ -370,11 +396,14 @@ def render(connection, thread_id: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Render a checkpointed thread as a self-contained HTML page.")
-    parser.add_argument("--list", action="store_true",
-                        help="show every stored thread, oldest first")
-    parser.add_argument("--select", action="store_true",
-                        help="choose a thread by index and render it")
+        description="Render a checkpointed thread as a self-contained HTML page."
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="show every stored thread, oldest first"
+    )
+    parser.add_argument(
+        "--select", action="store_true", help="choose a thread by index and render it"
+    )
     args = parser.parse_args()
 
     # bare invocation explains itself rather than guessing at a thread
@@ -390,8 +419,10 @@ def main() -> None:
     if args.list:
         for thread in sorted(threads, key=lambda t: t["ts"]):
             name = thread["title"] or "(untitled)"
-            print(f"{thread['ts'][:19]}  {name:34}  {thread['thread_id']}  "
-                  f"{thread['count']} messages")
+            print(
+                f"{thread['ts'][:19]}  {name:34}  {thread['thread_id']}  "
+                f"{thread['count']} messages"
+            )
         return
 
     ordered = by_name(threads)

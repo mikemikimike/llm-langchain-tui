@@ -2,8 +2,8 @@ import os
 import re
 
 from langchain.tools import tool
+from langchain_milvus import BM25BuiltInFunction, Milvus
 from langchain_ollama.embeddings import OllamaEmbeddings
-from langchain_milvus import Milvus, BM25BuiltInFunction
 from pymilvus import Function, FunctionType
 
 from llmtui.config import (
@@ -37,11 +37,19 @@ vector_store = Milvus(
     # must match ingest.py -- see the note there on why SPARSE_INVERTED_INDEX
     # is spelled out instead of letting BM25 default to AUTOINDEX
     index_params=[
-        {"metric_type": DENSE_METRIC_TYPE, "index_type": DENSE_INDEX_TYPE, "params": {}},
-        {"metric_type": SPARSE_METRIC_TYPE, "index_type": SPARSE_INDEX_TYPE, "params": {}},
+        {
+            "metric_type": DENSE_METRIC_TYPE,
+            "index_type": DENSE_INDEX_TYPE,
+            "params": {},
+        },
+        {
+            "metric_type": SPARSE_METRIC_TYPE,
+            "index_type": SPARSE_INDEX_TYPE,
+            "params": {},
+        },
     ],
     # milvus grpc sends keep_alive messages, adding noise to the frontend
-    connection_args={"uri": MILVUS_DB, "grpc_options": MILVUS_GRPC_OPTIONS}
+    connection_args={"uri": MILVUS_DB, "grpc_options": MILVUS_GRPC_OPTIONS},
 )
 
 # https://milvus.io/docs/rrf-ranker.md
@@ -102,7 +110,7 @@ def search_books(query: str, book: str = "") -> tuple[str, dict]:
     book = book.strip()
 
     # Note: the hybrid search guide https://milvus.io/docs/milvus_hybrid_search_retriever.md#Specify-the-index-params-for-multi-vector-fields
-    # says to use the "ranker_type" parameter, but i got deprecation warnings, so i used this custom function as per the warning 
+    # says to use the "ranker_type" parameter, but i got deprecation warnings, so i used this custom function as per the warning
     kwargs = {"k": TOP_K, "fetch_k": FETCH_K, "reranker": reranker}
 
     # we send an extra filter.

@@ -1,10 +1,10 @@
 """For all the MCP client interfaces."""
-import httpx
 
 from collections.abc import Awaitable, Callable
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
+import httpx
 from langchain_core.tools.base import BaseTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from llmtui.config import OBSIDIAN_API_KEY, OBSIDIAN_CERT_PATH
 
@@ -42,10 +42,8 @@ MCP_SERVERS: dict = {
     "obsidian": {
         "transport": "http",
         "url": "https://127.0.0.1:27124/mcp/",
-        "headers": {
-            "Authorization": f"Bearer {OBSIDIAN_API_KEY}"
-        },
-        "httpx_client_factory": _obsidian_http_client
+        "headers": {"Authorization": f"Bearer {OBSIDIAN_API_KEY}"},
+        "httpx_client_factory": _obsidian_http_client,
     }
 }
 
@@ -63,7 +61,7 @@ WHITELISTED_TOOLS: set[str] = {
     "vault_copy",
     "vault_get_document_map",
     "search_simple",
-    "open_file"
+    "open_file",
 }
 
 
@@ -189,8 +187,7 @@ def _watch_servers(status: MCPStatus):
 
 
 async def get_mcp_tools(status: MCPStatus) -> list[BaseTool]:
-    """Get every server's tools and update the given MCPStatus according to uptime.
-    """
+    """Get every server's tools and update the given MCPStatus according to uptime."""
 
     # tool interceptor will catch the tool returns to see if the mcp server
     # connection is still alive

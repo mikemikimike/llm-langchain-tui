@@ -14,7 +14,9 @@ from llmtui.tools.mcp import MCPStatus, get_mcp_tools, vault_reader
 from llmtui.tui import LlmTui
 
 # announces that its beta, so we shush it
-warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
+warnings.filterwarnings(
+    "ignore", message=".*v3 streaming protocol on Pregel is experimental.*"
+)
 
 
 async def main_async() -> None:
