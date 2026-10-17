@@ -20,6 +20,12 @@ import json
 import os
 from pathlib import Path
 
+# milvus-lite forks a server subprocess out of this process, and gRPC writes a
+# fork-guard warning to stderr the first time that happens -- which lands mid-TUI,
+# rendered straight into the prompt area. the warning is harmless and gRPC's C
+# core reads this at import time, so it is set here, before anything imports it
+os.environ.setdefault("GRPC_VERBOSITY", "NONE")
+
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 # overridable so tests can point at their own config
