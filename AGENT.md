@@ -12,9 +12,22 @@ uv run python scripts/ingest.py <pdf_dir>   # build the vector store (dev db fir
 uv run python scripts/inspect_context.py    # dump a thread's context as HTML for debugging
 ```
 
+## CI, formatting, and the pre-commit hook
+
+- All commands go through uv; dev tools (ruff, mdformat) install via
+  `uv sync --group dev`.
+
+- `make format` reformats everything; `make lint` runs the exact checks CI runs
+  (`.github/workflows/ci.yml`: ruff format --check, ruff check, mdformat --check --wrap
+  88). Same strings, so hook, CI, and local can't drift.
+
+- A checked-in pre-commit hook runs `make lint` on every commit and blocks on failure.
+  It needs one-time activation per clone: `git config core.hooksPath hooks`.
+
 - Requires a running model server, described in `config/models.json` (copy
   `config/models.example.json`). Any OpenAI-compatible endpoint works — Ollama,
   llama.cpp server, vLLM, LM Studio, or a remote API (OpenAI-compat dialect only).
+
 - All settings live in `config/config.json` (copy `config/config.example.json`). Every
   key is read, type-checked, and path-resolved against the project root in
   `llmtui/config.py` — a bad file fails at import with the offending key. Both files are
@@ -22,6 +35,7 @@ uv run python scripts/inspect_context.py    # dump a thread's context as HTML fo
   `config/models.json` (see `llmtui/models_config.py`), loaded at call time and re-read
   every time `/model` opens. `$NAME` in any string interpolates from the environment.
   Add new settings there, never via raw `os.getenv` elsewhere.
+
 - Prompts are plain files under `prompts/` (`system.txt`, `self_name.txt`), pointed at
   by `config/config.json` paths.
 
@@ -68,12 +82,12 @@ LangChain concerns into them.
 
 ## Conventions & gotchas
 
-- Text style (enforced by tooling: `ruff format` line-length 96 for code,
-  `mdformat --wrap 88` for .md; .json is hand-formatted, 4-space indent — mdformat's
-  json style is too flat for config files): wrap prose and comments at that width,
-  breaking at clause/punctuation boundaries. When an edit touches a sentence inside a
-  wrapped paragraph, re-wrap the whole paragraph rather than splicing lines — a
-  mid-sentence splice is exactly what mdformat then has to undo.
+- Text style (enforced by tooling: `ruff format` line-length 88 for code,
+  `mdformat --wrap 88` for .md — one width everywhere; .json is hand-formatted, 4-space
+  indent — mdformat's json style is too flat for config files): wrap prose and comments
+  at that width, breaking at clause/punctuation boundaries. When an edit touches a
+  sentence inside a wrapped paragraph, re-wrap the whole paragraph rather than splicing
+  lines — a mid-sentence splice is exactly what mdformat then has to undo.
 - The codebase is heavily commented with reasoning about _why_; read and preserve that
   style. Don't strip explanatory comments.
 - The checkpointer must be `AsyncSqliteSaver` (the sync saver raises on async calls);
