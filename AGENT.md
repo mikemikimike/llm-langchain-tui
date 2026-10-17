@@ -3,6 +3,13 @@
 A LangChain/LangGraph practice project: a self-hosted chat agent (Ollama local models)
 behind a Textual TUI, with RAG over a PDF library and Obsidian vault tools over MCP.
 
+## Git protocol (binding on agents)
+
+- **Never commit or push autonomously.** Make changes in the working tree, show the
+  diff/summary, and wait. The user commits and pushes explicitly — or instructs the
+  agent to do so in that message. No push-per-fix chains, no "I'll just push this one."
+  This includes PRs and workflow monitoring: hand the user the commands and stop.
+
 ## Run it (Python 3.12)
 
 ```bash
