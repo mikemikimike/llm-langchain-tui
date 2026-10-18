@@ -8,7 +8,6 @@ from pathlib import Path
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.documents import Document
 from langchain_milvus import BM25BuiltInFunction, Milvus
-from langchain_ollama.embeddings import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
@@ -19,12 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from llmtui.config import (
     DENSE_INDEX_TYPE,
     DENSE_METRIC_TYPE,
-    EMBEDDING_MODEL,
     MILVUS_GRPC_OPTIONS,
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
 )
 from llmtui.config import MILVUS_DEV_DB_PATH as MILVUS_DB
+from llmtui.models_config import build_embeddings, load_embeddings
 
 parser = argparse.ArgumentParser(
     description="Ingest a directory of PDFs into the dev vector store."
@@ -66,7 +65,7 @@ if Path(MILVUS_DB).exists():
         sys.exit("Aborting.")
 
 
-embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+embeddings = build_embeddings(load_embeddings())
 
 # dense + sparse
 #

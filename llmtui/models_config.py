@@ -4,7 +4,10 @@ llmtui core knows nothing about specific providers: this file describes
 self-provided OpenAI-compatible endpoints (Ollama, llama.cpp server, vLLM,
 LM Studio, ...) in the shape the pi harness uses, and `build_chat_model`
 turns an entry into a LangChain chat model. Adding a server is a JSON edit,
-never a code change.
+never a code change. Embeddings work the same way: the top-level `embeddings`
+section in models.json is a self-contained provider entry (its own baseUrl,
+not a reference into `providers`, so the embedding server can differ from the
+chat server) and `build_embeddings` turns it into a LangChain embeddings model.
 
 Read at call time, not import time: the /model picker reloads the file every
 time it opens, so edits show up live. The one dialect implemented today is
@@ -19,6 +22,8 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
@@ -60,6 +65,12 @@ RESERVED_REQUEST_FIELDS = frozenset(
 # message names the file and the provider
 _UNSAFE_KEY_CHARS = re.compile(r"[\x00-\x1f\x7f\s]")
 
+# fields the embeddings entry itself or the caller owns; params must shape
+# the embedding call, never redirect it -- mirrors RESERVED_REQUEST_FIELDS
+_EMBEDDINGS_RESERVED_FIELDS = frozenset(
+    {"model", "api_key", "base_url", "openai_api_key", "openai_api_base"}
+)
+
 
 @dataclass(frozen=True)
 class ModelEntry:
@@ -77,6 +88,20 @@ class ModelEntry:
     # advertised context window in tokens, for the status meter. metadata
     # only -- nothing sends it anywhere
     context_window: int = 0
+
+
+@dataclass(frozen=True)
+class EmbeddingsEntry:
+    # self-contained, not a provider reference: embeddings may run on a
+    # different server than chat (e.g. remote API for chat, local ollama for
+    # the vector store) and forcing one connection for both would forbid that
+    base_url: str
+    api: str
+    api_key: str
+    model: str
+    # free-form constructor kwargs for the embeddings client, merged verbatim;
+    # core does not interpret them (e.g. dimensions, check_embedding_ctx_length)
+    params: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -240,6 +265,76 @@ def load_models(path: Path | None = None) -> dict[str, Provider]:
     return providers
 
 
+def load_embeddings(path: Path | None = None) -> EmbeddingsEntry:
+    """Read and validate the top-level 'embeddings' section of models.json.
+
+    Raises at every call, naming the file. Called at ingest and at tool
+    import, so the same live-reload contract as load_models applies. A missing
+    or absent section raises: without a configured embedding model the vector
+    store cannot load and the run must not start on a guessed default -- no
+    server is guaranteed to exist on the device, so the failure comes from
+    here, naming the file.
+    """
+
+    path = path or MODELS_PATH
+    if not path.exists():
+        raise RuntimeError(
+            f"{path}: 'embeddings' section is required but the file does not"
+            " exist. Copy config/models.example.json to config/models.json and"
+            " point it at a server."
+        )
+
+    data = _load_json(path)
+    raw = data.get("embeddings")
+    if not isinstance(raw, dict):
+        raise RuntimeError(
+            f"{path}: missing or malformed 'embeddings' section (must be an"
+            " object with baseUrl, api, apiKey, model)"
+        )
+
+    where = "embeddings"
+    base_url = _require(raw, "baseUrl", path, f"{where} connection")
+    api = _require(raw, "api", path, f"{where} connection")
+    api_key = _require(raw, "apiKey", path, f"{where} connection")
+    model = _require(raw, "model", path, where)
+
+    if not base_url.startswith(("http://", "https://")):
+        raise RuntimeError(
+            f"{path}: {where}.baseUrl must be an http(s) url, got {base_url!r}"
+        )
+    if _UNSAFE_KEY_CHARS.search(api_key):
+        raise RuntimeError(
+            f"{path}: {where}.apiKey contains control characters or whitespace"
+        )
+    if api not in SUPPORTED_APIS:
+        raise RuntimeError(
+            f"{path}: {where} declares api {api!r}; supported: {SUPPORTED_APIS}"
+        )
+
+    params = raw.get("params")
+    if params is not None:
+        if not isinstance(params, dict):
+            raise RuntimeError(f"{path}: {where}.params must be an object")
+        for key in params:
+            if key.lower() in _EMBEDDINGS_RESERVED_FIELDS:
+                raise RuntimeError(
+                    f"{path}: {where}.params.{key} is a reserved field and"
+                    " cannot be overridden"
+                )
+        params = {
+            key: _interpolate(value, path, f"{where}.params.{key}")
+            for key, value in params.items()
+        }
+
+    return EmbeddingsEntry(
+        base_url=base_url,
+        api=api,
+        api_key=api_key,
+        model=model,
+        params=params,
+    )
+
+
 def flatten(providers: dict[str, Provider]) -> list[ModelEntry]:
     """All model entries, in provider-then-file order, for pickers."""
 
@@ -275,8 +370,6 @@ def build_chat_model(entry: ModelEntry, provider: Provider):
             f"no builder for api {provider.api!r} (provider {provider.name!r})"
         )
 
-    from langchain_openai import ChatOpenAI
-
     extra_body = dict(entry.sampling_params or {})
     effort = _reasoning_effort(entry)
     if effort is not None:
@@ -287,6 +380,33 @@ def build_chat_model(entry: ModelEntry, provider: Provider):
         api_key=provider.api_key,
         model=entry.id,
         extra_body=extra_body or None,
+    )
+
+
+# ---------------------------------------------------------------------
+# the embeddings dialect. mirrors build_chat_model: one function, one api,
+# a new dialect means a new branch here, not a change anywhere else
+# ---------------------------------------------------------------------
+
+
+def build_embeddings(entry: EmbeddingsEntry):
+    """Turn a validated embeddings entry into a LangChain embeddings model.
+
+    Only openai-completions exists: /v1/embeddings is the one convention
+    served across the stacks this app targets (Ollama, vLLM, LM Studio,
+    remote APIs like TensorX or OpenRouter). params are passed to the
+    constructor verbatim -- the server/client decides which fields mean
+    what, core does not interpret them.
+    """
+
+    if entry.api != "openai-completions":
+        raise RuntimeError(f"no embeddings builder for api {entry.api!r}")
+
+    return OpenAIEmbeddings(
+        base_url=entry.base_url,
+        api_key=entry.api_key,
+        model=entry.model,
+        **(entry.params or {}),
     )
 
 

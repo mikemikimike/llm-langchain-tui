@@ -3,18 +3,17 @@ import re
 
 from langchain.tools import tool
 from langchain_milvus import BM25BuiltInFunction, Milvus
-from langchain_ollama.embeddings import OllamaEmbeddings
 from pymilvus import Function, FunctionType
 
 from llmtui.config import (
     DENSE_INDEX_TYPE,
     DENSE_METRIC_TYPE,
-    EMBEDDING_MODEL,
     MILVUS_GRPC_OPTIONS,
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
 )
 from llmtui.config import MILVUS_PROD_DB_PATH as MILVUS_DB
+from llmtui.models_config import build_embeddings, load_embeddings
 
 # different then model sampling TOP_K.
 # 5 retrievals for now, i dont want to flood the context.
@@ -31,7 +30,7 @@ RRF_K = 60
 # has to mirror the schema ingest.py builds, or the collection won't load.
 # BM25 is exact-term only here -- see the note in ingest.py
 vector_store = Milvus(
-    embedding_function=OllamaEmbeddings(model=EMBEDDING_MODEL),
+    embedding_function=build_embeddings(load_embeddings()),
     builtin_function=BM25BuiltInFunction(),
     vector_field=["dense", "sparse"],
     # must match ingest.py -- see the note there on why SPARSE_INVERTED_INDEX
