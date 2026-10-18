@@ -101,10 +101,6 @@ MILVUS_GRPC_OPTIONS: dict = {
     "grpc.keepalive_time_ms": 300_000,
 }
 
-# embeddings (RAG): configured in models.json ('embeddings' section), loaded
-# at call time via llmtui.models_config -- same provider-agnostic contract as
-# chat models. config.json only holds the shared milvus schema.
-
 # agent behaviour
 _agent = _section("agent")
 # searches allowed per user turn

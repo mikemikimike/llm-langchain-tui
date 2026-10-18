@@ -287,14 +287,8 @@ def load_embeddings(path: Path | None = None) -> EmbeddingsEntry:
     """
 
     path = path or MODELS_PATH
-    if not path.exists():
-        raise RuntimeError(
-            f"{path}: 'embeddings' section is required but the file does not"
-            " exist. Copy config/models.example.json to config/models.json and"
-            " point it at a server."
-        )
-
     data = _load_json(path)
+
     raw = data.get("embeddings")
     if not isinstance(raw, dict):
         raise RuntimeError(
