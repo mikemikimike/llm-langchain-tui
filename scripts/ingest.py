@@ -33,13 +33,7 @@ CHUNK_OVERLAP: int = 150
 # i drop them by filtering by chunk size
 # it might be defeating the purpose of BM25 document length normalisation, i dont know
 MIN_CHUNK_CHARS: int = 50
-BATCH_SIZE: int = 64
 CPU_COUNT: int = os.cpu_count()
-# threads, not processes: this waits on ollama over http, so the GIL is
-# released. serial batches leave the GPU idle during each milvus insert;
-# overlapping them saturates it. measured 62 -> 108 chunks/s, and 8 workers
-# was no better than 4.
-EMBED_WORKERS: int = 4
 
 
 def load_pdf(path: Path) -> list[Document]:
@@ -69,7 +63,15 @@ def main() -> None:
         else:
             sys.exit("Aborting.")
 
-    embeddings = build_embeddings(load_embeddings())
+    entry = load_embeddings()
+    embeddings = build_embeddings(entry)
+    # model-bound ingest tuning, not script-bound: how many documents one
+    # /v1/embeddings call carries (bounded by the model's context window)
+    # and how many calls run in parallel (GPU-bound locally, rate-limit
+    # bound remotely) are required keys on the embeddings section of
+    # models.json -- no number is right for every model, so no defaults
+    BATCH_SIZE: int = entry.batch_size
+    EMBED_WORKERS: int = entry.concurrency
 
     # dense + sparse
     #

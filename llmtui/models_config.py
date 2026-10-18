@@ -99,8 +99,18 @@ class EmbeddingsEntry:
     api: str
     api_key: str
     model: str
+    # how many documents one /v1/embeddings call carries. bounded by the
+    # model's context window -- batch chars * ~4 tokens must fit it, and the
+    # client-side tokenizer only approximates the server's, so leave slack.
+    # no default on purpose: required config keys, per-model/server chemistry
+    batch_size: int
+    # parallel in-flight embedding calls. device-bound for local servers
+    # (GPU saturation), rate-limit-bound for remote ones -- a number that
+    # was measured for ollama-bge-m3 tells you nothing about a remote model
+    concurrency: int
     # free-form constructor kwargs for the embeddings client, merged verbatim;
     # core does not interpret them (e.g. dimensions, check_embedding_ctx_length)
+    # optional, unlike the fields above: some servers need none
     params: dict | None = None
 
 
@@ -273,7 +283,7 @@ def load_embeddings(path: Path | None = None) -> EmbeddingsEntry:
     or absent section raises: without a configured embedding model the vector
     store cannot load and the run must not start on a guessed default -- no
     server is guaranteed to exist on the device, so the failure comes from
-    here, naming the file.
+    here, naming the file. Returns the entry.
     """
 
     path = path or MODELS_PATH
@@ -326,12 +336,32 @@ def load_embeddings(path: Path | None = None) -> EmbeddingsEntry:
             for key, value in params.items()
         }
 
+    batch_size = raw.get("batchSize")
+    concurrency = raw.get("concurrency")
+    # required, not defaulted: they are per-model/server chemistry -- one
+    # call's document count is bounded by the model's context window, and
+    # the safe parallel-call count is device-bound locally (GPU saturation)
+    # but rate-limit-bound remotely. there is no number that is right for
+    # every model, so the config must state them
+    if not isinstance(batch_size, int) or batch_size < 1:
+        raise RuntimeError(
+            f"{path}: {where}.batchSize is required and must be a positive"
+            f" integer, got {batch_size!r}"
+        )
+    if not isinstance(concurrency, int) or concurrency < 1:
+        raise RuntimeError(
+            f"{path}: {where}.concurrency is required and must be a positive"
+            f" integer, got {concurrency!r}"
+        )
+
     return EmbeddingsEntry(
         base_url=base_url,
         api=api,
         api_key=api_key,
         model=model,
         params=params,
+        batch_size=batch_size,
+        concurrency=concurrency,
     )
 
 
