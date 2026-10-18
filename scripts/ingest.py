@@ -107,13 +107,6 @@ def main() -> None:
     print(f"Detected {CPU_COUNT} CPU cores, loading {len(pdf_paths)} PDFs...")
 
     # cheeky little parallelisation to make myself feel better while i doomscroll as this runs
-    #
-    # everything below sits inside main() on purpose: the macOS default start
-    # method is spawn, and a spawn worker re-imports this file as __main__.
-    # when argparse and the wipe prompt ran at module level, every worker
-    # re-executed them and died on entry -- the pool "abruptly terminated"
-    # every single upload before loading a page. the __main__ guard is what
-    # keeps the workers from recursing.
     docs = []
     with ProcessPoolExecutor(max_workers=CPU_COUNT) as executor:
         futures = {executor.submit(load_pdf, path): path for path in pdf_paths}
