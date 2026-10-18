@@ -71,6 +71,19 @@ def compact(n: int) -> str:
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
 
+# the menu is built from this rather than from the help text, so /help and the
+# popup can never drift apart. (name, one-line description)
+COMMANDS: list[tuple[str, str]] = [
+    ("help", "this list"),
+    ("new", "start a fresh conversation"),
+    ("list", "every conversation so far"),
+    ("name", "title this conversation"),
+    ("load", "resume a conversation"),
+    ("model", "switch model"),
+    ("delete", "remove conversations, this one included"),
+]
+
+
 class ToolRow(Collapsible):
     """One tool call: a status line that expands in place into its passages.
 
@@ -410,6 +423,50 @@ class WriteCard(Vertical):
         self.focus()
 
 
+class CommandMenu(OptionList):
+    """The floating list of viable commands, shown above the prompt while it
+    holds a "/fragment".
+
+    Not a ModalScreen -- the prompt must keep the focus and keep accepting
+    keystrokes while the menu is up, the way pi does it. The prompt drives it:
+    the menu only paints whichever commands still match and reports the
+    highlighted one back when the prompt asks for a completion.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(id="command-menu", classes="hidden")
+        # the entries currently painted, kept so the highlight can be mapped
+        # back to a command name. positional indexing of COMMANDS would break
+        # the moment the list is filtered -- highlight 0 of "/l" is list, not
+        # the first command ever defined
+        self._shown: list[tuple[str, str]] = []
+
+    def show(self, matches: list[tuple[str, str]]) -> None:
+        """Repaint with the given matches and make the first one the target."""
+
+        self._shown = matches
+        self.clear_options().add_options(
+            f"/[b]{name}[/b]  [dim]· {about}[/]" for name, about in matches
+        )
+        self.remove_class("hidden")
+        self.highlighted = 0
+
+    def hide(self) -> None:
+        self.add_class("hidden")
+        self.clear_options()
+
+    @property
+    def active(self) -> bool:
+        return not self.has_class("hidden") and self.option_count > 0
+
+    def current(self) -> str | None:
+        """The command name under the highlight, for completion."""
+
+        if not self.active or self.highlighted is None:
+            return None
+        return self._shown[self.highlighted][0]
+
+
 class PromptArea(TextArea):
     """The prompt box: soft-wrapped, and it grows instead of scrolling sideways.
 
@@ -426,6 +483,43 @@ class PromptArea(TextArea):
             super().__init__()
 
     async def _on_key(self, event: events.Key) -> None:
+        # while the menu is up the prompt lends it the navigation keys, the same
+        # bargain a combobox makes. tab completes into the prompt; enter runs
+        # the highlighted command outright; escape puts it
+        # away without touching the stop-generating binding underneath
+        menu = self.app.query_one(CommandMenu)
+        if menu.active:
+            if event.key == "down":
+                event.stop()
+                event.prevent_default()
+                menu.action_cursor_down()
+                return
+            if event.key == "up":
+                event.stop()
+                event.prevent_default()
+                menu.action_cursor_up()
+                return
+            if event.key == "tab":
+                event.stop()
+                event.prevent_default()
+                self.complete(menu.current())
+                return
+            if event.key == "enter":
+                event.stop()
+                event.prevent_default()
+                # enter does not just fill the prompt in -- it runs the
+                # highlighted command, the way submitting a typed "/help"
+                # would
+                command = menu.current()
+                if command is not None:
+                    self.post_message(self.Submitted(f"/{command}"))
+                return
+            if event.key == "escape":
+                event.stop()
+                event.prevent_default()
+                menu.hide()
+                return
+
         if event.key == "enter":
             event.stop()
             event.prevent_default()
@@ -438,6 +532,17 @@ class PromptArea(TextArea):
             self.insert("\n")
             return
         await super()._on_key(event)
+
+    def complete(self, command: str | None) -> None:
+        """Fill in the highlighted command and hand the prompt back."""
+
+        self.app.query_one(CommandMenu).hide()
+        if command is None:
+            return
+        self.text = f"/{command} "
+        # setting text rewinds the cursor to the start; put it back at the end
+        self.move_cursor(self.document.end)
+        self.focus()
 
 
 class StatusBar(Static):
@@ -725,6 +830,8 @@ class LlmTui(App):
         # CSS are docked to the bottom. we do a hard split here and each are
         # bottoming their own containers. nothing a 30 minute debug sidetracking cant fix :')
         with Vertical(id="footer"):
+            # the floating command menu; hidden until the prompt holds a "/..."
+            yield CommandMenu()
             yield PromptArea(
                 placeholder="ask about the library, or /help",
                 soft_wrap=True,
@@ -749,12 +856,37 @@ class LlmTui(App):
         # whenever something new is deliberately put on screen
         self.transcript.anchor()
 
+    @on(PromptArea.Changed, "#prompt")
+    def prompt_changed(self) -> None:
+        """Keeps the command menu in step with what is being typed.
+
+        A menu is shown while the prompt holds "/" plus a fragment with no
+        space in it -- once the command is being argued with, it is no longer
+        being picked. Matches are prefix, so the list thins out as the command
+        is spelled: / shows everything, /l leaves list and load, /load leaves
+        one.
+        """
+
+        text = self.query_one("#prompt", PromptArea).text
+        menu = self.query_one(CommandMenu)
+        if not text.startswith("/") or " " in text:
+            menu.hide()
+            return
+        fragment = text[1:].lower()
+        matches = [c for c in COMMANDS if c[0].startswith(fragment)]
+        if matches:
+            menu.show(matches)
+        else:
+            menu.hide()
+
     # ---------- input ----------
 
     @on(PromptArea.Submitted)
     async def submitted(self, event: PromptArea.Submitted) -> None:
         text = event.value.strip()
         self.query_one("#prompt", PromptArea).text = ""
+        # the menu filters on the prompt's text, which was just emptied
+        self.query_one(CommandMenu).hide()
         if not text:
             return
         if text.startswith("/"):
@@ -1023,13 +1155,9 @@ class LlmTui(App):
         current = self.agent_thread_config["configurable"]["thread_id"]
 
         if command == "help":
+            width = max(len(name) for name, _ in COMMANDS)
             await self._note(
-                "/help    this list\n"
-                "/new     start a fresh conversation\n"
-                "/list    every conversation so far\n"
-                "/name    title this conversation\n"
-                "/load    resume a conversation\n"
-                "/delete  remove conversations, this one included"
+                "\n".join(f"/{name:<{width}}  {about}" for name, about in COMMANDS)
             )
 
         elif command == "new":
