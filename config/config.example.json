@@ -13,9 +13,6 @@
         "sparse_metric_type": "BM25",
         "sparse_index_type": "SPARSE_INVERTED_INDEX"
     },
-    "embeddings": {
-        "embedding_model": "bge-m3:latest"
-    },
     "agent": {
         "max_tool_calls": 3,
         "display_thinking": true

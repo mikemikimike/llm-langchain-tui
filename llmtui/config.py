@@ -101,11 +101,6 @@ MILVUS_GRPC_OPTIONS: dict = {
     "grpc.keepalive_time_ms": 300_000,
 }
 
-# embeddings (RAG). still Ollama-bound; the ingest pipeline is provider-agnostic
-# work for a later task (see SPEC-provider-migration.md, out of scope)
-_embeddings = _section("embeddings")
-EMBEDDING_MODEL: str = _get(_embeddings, "embedding_model")
-
 # agent behaviour
 _agent = _section("agent")
 # searches allowed per user turn

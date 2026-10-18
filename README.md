@@ -19,8 +19,7 @@ templates. Paths inside them are relative to the project root and resolved in
 import, naming the offending key.
 
 `config/config.json` — app settings: sqlite/milvus db paths, milvus index options, the
-obsidian api key and cert, agent behaviour (`max_tool_calls`, `display_thinking`), and
-`embedding_model` for ingest.
+obsidian api key and cert, agent behaviour (`max_tool_calls`, `display_thinking`).
 
 `config/models.json` — providers and models, pi-harness style. Any OpenAI-compatible
 endpoint (ollama, llama.cpp server, vLLM, LM Studio, remote apis) is just a JSON entry;
@@ -51,10 +50,12 @@ slash commands in the TUI: `/help`, `/model`, `/name`, `/load`, `/new`, `/delete
 ## rag / ingest
 
 `ingest.py` builds a hybrid (dense + bm25) milvus index from a directory of PDFs into
-the dev db. promote to prod by copying over it:
+the dev db. promote to prod by copying over it. run this from the root of the project:
 
 ```
-rf milvus_prod.db && cp -r milvus_dev.db milvus_prod.db
+rm -rf db/milvus_prod.db && cp -r db/milvus_dev.db db/milvus_prod.db
 ```
 
-embeddings are still ollama-bound (`embedding_model` in `config/config.json`).
+embeddings are provider-agnostic too: the `embeddings` section of `config/models.json`
+(names a `baseUrl`, `apiKey`, and `model`) — any `/v1/embeddings`-compatible server
+works: ollama, TensorX, OpenRouter, e.g. `qwen/Qwen3-Embedding-8B`.

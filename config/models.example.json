@@ -17,5 +17,13 @@
                 }
             ]
         }
+    },
+    "embeddings": {
+        "baseUrl": "http://localhost:11434/v1",
+        "api": "openai-completions",
+        "apiKey": "ollama",
+        "model": "bge-m3:latest",
+        "batchSize": 32,
+        "concurrency": 4
     }
 }
