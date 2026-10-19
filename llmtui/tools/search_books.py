@@ -1,4 +1,3 @@
-import os
 import re
 
 from langchain.tools import tool
@@ -103,10 +102,10 @@ def search_books(query: str, book: str = "") -> tuple[str, dict]:
     Returns the passages and, alongside them, how many there were. The count
     goes in the artifact rather than the text, so the tool row can show that a
     search came back empty without that number reaching the model. Cite the
-    passages you use by copying each result's opening marker -- [file.pdf p.N]
-    -- verbatim into the answer: the interface turns exactly that syntax into a
-    link that opens the PDF at page N. Never alter the filename or page, never
-    merge two results into one marker.
+    passages you use by copying each result's opening marker -- [file.pdf p.N],
+    with the path exactly as shown -- verbatim into the answer: the interface
+    turns exactly that syntax into a link that opens the PDF at page N. Never
+    alter the filename or page, never merge two results into one marker.
     """
 
     # clean the arg from query chars. milvus uses its own expression language
@@ -143,10 +142,13 @@ def search_books(query: str, book: str = "") -> tuple[str, dict]:
             "Do not answer from general knowledge."
         ), {"passages": 0}
 
-    # alongside the matched chunk, send metadata like the book title, page number
+    # alongside the matched chunk, send metadata like the book title, page number.
+    # the full path survives on purpose: the library nests in per-game folders, and
+    # citations resolve the file from this path -- a basename alone could not be
+    # found again
     formatted = []
     for doc in results:
-        source = os.path.basename(doc.metadata.get("source", "unknown"))
+        source = doc.metadata.get("source", "unknown")
         page = doc.metadata.get("page", "?")
         formatted.append(f"[{source} p.{page}]\n{doc.page_content}")
 

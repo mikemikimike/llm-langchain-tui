@@ -143,6 +143,15 @@ testing).
 
 ## Open items / accepted limitations
 
+- **Input layer (issue 2, separate):** citation links render and highlight on hover, but
+  physical clicks never dispatch `LinkClicked` in the user's terminal — while tool-row
+  (Collapsible) clicks DO work, and text selection drags but never reaches the
+  clipboard. The full code path is verified green in `pilot` tests replicating the real
+  widget tree (AssistantTurn → streamed answer → meta present → action dispatch →
+  bubbling → app handler → open_pdf). So the remaining break is where the terminal
+  forwards mouse input to Textual, not in this feature's code. Diagnosis needs: which
+  terminal + tmux?, whether `textual run --dev` shows style under cursor, and a
+  collision check between mouse reporting and selection modes.
 - Future idea (rough, not scheduled): live/remote library — e.g. a cron job rebuilding
   the Milvus index while the harness runs, or `pdf_dir` pointed at a Nextcloud mount
   instead of local files. The current wiring is ready for both: `search_books` reads

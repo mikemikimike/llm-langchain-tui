@@ -87,7 +87,10 @@ class ToolRow(Collapsible):
         self._started = time.monotonic()
         self._spin = 0
         self._timer = None
-        self._body = Static("running…", classes="passages")
+        # markup=False: tool output is echoed verbatim, and search results now
+        # carry [/full/path.pdf p.N] markers that Static would parse as closing
+        # tags and crash the screen
+        self._body = Static("running…", classes="passages", markup=False)
         super().__init__(
             self._body,
             title=self._row_title(),
@@ -268,7 +271,7 @@ class AssistantTurn(Vertical):
         await self._md.write(text)
 
     async def note(self, text: str, classes: str = "note") -> None:
-        await self.mount(Static(text, classes=classes))
+        await self.mount(Static(text, classes=classes, markup=False))
 
     async def finish(self) -> None:
         await self.close_round()
@@ -778,7 +781,7 @@ class LlmTui(App):
             return
 
         self.transcript.anchor()
-        await self.transcript.mount(Static(text, classes="turn user"))
+        await self.transcript.mount(Static(text, classes="turn user", markup=False))
         self.run_turn(text)
 
     # ---------- links ----------
@@ -1145,7 +1148,7 @@ class LlmTui(App):
 
     async def _note(self, text: str, failed: bool = False) -> None:
         classes = "turn note failed" if failed else "turn note"
-        await self.transcript.mount(Static(text, classes=classes))
+        await self.transcript.mount(Static(text, classes=classes, markup=False))
         self.transcript.anchor()
 
     async def switch_model(self, selector: str) -> None:
@@ -1223,7 +1226,7 @@ class LlmTui(App):
         for message in messages:
             if isinstance(message, HumanMessage):
                 await self.transcript.mount(
-                    Static(str(message.content), classes="turn user")
+                    Static(str(message.content), classes="turn user", markup=False)
                 )
                 continue
             if not isinstance(message, AIMessage):

@@ -56,15 +56,7 @@ def parse(href: str) -> Citation | None:
     if "%" in body:
         body = unquote(body)
     filename, _, page_part = body.partition("?p=")
-    # model output is a trust boundary: a ready-made link could name any path
-    # (Textual hands href over decoded), so only a bare filename may pass
-    if (
-        not filename
-        or not page_part.isdigit()
-        or "/" in filename
-        or "\\" in filename
-        or filename in (".", "..")
-    ):
+    if not filename or not page_part.isdigit():
         return None
     return Citation(filename=filename, page=int(page_part))
 
@@ -91,10 +83,7 @@ def _rewrite_citations(text: str) -> str:
 
     def link(match: re.Match) -> str:
         label = match.group().strip("[]")
-        # quote() leaves "/" alone; strip it, the citation names a file, and a
-        # stray slash would turn the href into a URL with a path
-        filename = match.group("file").replace("/", "")
-        href = f"{CITE_SCHEME}{quote(filename)}"
+        href = f"{CITE_SCHEME}{quote(match.group('file'))}"
         if match.group("page"):
             href += f"?p={match.group('page')}"
         return f"[{label}]({href})"
@@ -118,6 +107,36 @@ def _rewrite_citations(text: str) -> str:
     return "".join(out)
 
 
+def _search_library(citation: Citation, library_dir: Path, root: Path) -> str | None:
+    """The model abbreviates full-path markers to basenames, so a root miss
+    falls back to scanning the library for that filename. One unique match
+    opens; several ask the caller to disambiguate; none is the ingest-desync
+    case. The scan is a few hundred rglob entries -- fast enough per click,
+    and rare (only on misses)."""
+
+    matches = [
+        p
+        for p in library_dir.rglob("*.pdf")
+        if p.name == Path(citation.filename).name
+        # case-insensitive root check, same reasoning as open_pdf's boundary
+        if str(p.resolve()).lower().startswith(str(root).lower().rstrip("/") + "/")
+    ]
+    if len(matches) == 1:
+        citation.filename = str(matches[0])
+        return None
+    if len(matches) > 1:
+        listing = "\n".join(f"  {p.relative_to(library_dir)}" for p in matches[:5])
+        return (
+            f"{citation.filename} matches {len(matches)} books in the library; "
+            f"cannot pick one:\n{listing}"
+        )
+    return (
+        f"PDF not found in the library: {citation.filename}. The vector store "
+        f"may be out of sync with the files -- re-run ingest if it should be "
+        f"there."
+    )
+
+
 def open_pdf(citation: Citation, library_dir: Path) -> str | None:
     """Open the cited PDF at its page with the system default reader.
 
@@ -129,14 +148,25 @@ def open_pdf(citation: Citation, library_dir: Path) -> str | None:
 
     if citation.page < 1:
         return f"{citation.filename}: page {citation.page} is not a real page."
-    path = library_dir / citation.filename
-    if not path.is_file():
-        # basenames come from ingest metadata, so the file could live in a
-        # subdirectory of the library we cannot recover -- name the fix
+    # the citation may name a full path from search results or a bare filename in
+    # the library root. resolve() first: it is the security boundary against a
+    # crafted link escaping the library (traversal, symlinks) -- string checks
+    # cannot see through either. the case-insensitive compare is deliberate:
+    # macOS filesystems are case-insensitive, so config and ingest argv can
+    # disagree on letter case and both still name the same directory
+    path = (library_dir / citation.filename).resolve()
+    root = library_dir.resolve()
+    root_str = str(root).rstrip("/")
+    path_str = str(path)
+    if path_str.lower() != root_str.lower() and not path_str.lower().startswith(
+        root_str.lower() + "/"
+    ):
         return (
-            f"PDF not found in the library: {citation.filename}. "
-            f"Search in {library_dir} (used evidence may be from a subfolder)."
+            f"Refusing to open {citation.filename}: it resolves outside the "
+            f"library at {root}."
         )
+    if not path.is_file():
+        return _search_library(citation, library_dir, root)
     try:
         system = platform.system()
         if system == "Darwin":
