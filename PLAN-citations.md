@@ -51,51 +51,64 @@ Markdown widget (open_links=False)
 
 <!-- Check items as they land. Each phase ends with its validation line. -->
 
-### Phase 1 — `llmtui/citations.py` (pure logic, no UI, mirrors `writes.py`)
+### Phase 1 — `llmtui/citations.py` (pure logic, no UI, mirrors `writes.py`) — DONE
 
-- [ ] Constants + `Citation` dataclass: `CITE_SCHEME = "cite://"`,
+- [x] Constants + `Citation` dataclass: `CITE_SCHEME = "cite://"`,
   `parse(href: str) -> Citation | None` (splits filename + page, tolerates URL-decoded
   input).
-- [ ] `normalize(text: str) -> str`: regex rewrite of bare citations
+- [x] `normalize(text: str) -> str`: regex rewrite of bare citations
   (`[book.pdf, pg. 7]`, `[book.pdf p.7]`, `[book.pdf, page 7]`) into
   `[book.pdf, pg. 7](cite://book.pdf?p=7)`; filename URL-encoded; skip text already
   inside a markdown link target (no double-wrap).
-- [ ] `open_pdf(citation, library_dir: Path) -> str | None`: resolve
-  `library_dir / filename`, verify existence + `.pdf`, launch per OS, return an error
-  string (None on success) for the TUI to `notify()`. - Linux:
-  `xdg-open "<path>#page=<n>"` - macOS: `open "<path>"`; page accuracy needs an
-  AppleScript fallback (Preview has no CLI page arg) — defer - Windows:
-  `os.startfile(path)` — file only
-- [ ] Tests in `tests/test_citations.py`: normalization variants, no-double-wrap, parse
-  round-trip with URL-encoded spaces in filenames, missing-file error.
+- [x] `open_pdf(citation, library_dir: Path) -> str | None`: resolve
+  `library_dir / filename`, verify existence, launch per OS, return an error string
+  (None on success) for the TUI to `notify()`. - Linux: `xdg-open "<path>#page=<n>"` -
+  macOS: `open "<path>"`; page accuracy needs an AppleScript fallback (Preview has no
+  CLI page arg) — deferred - Windows: `os.startfile(path)` — file only
+- [x] Tests in `tests/test_citations.py`: 5 tests — variants,
+  no-double-wrap/idempotence, nested-bracket passthrough, parse round-trip + rejections,
+  open_pdf error paths.
 
-Validate: `uv run pytest tests/test_citations.py`, `make lint`.
+Review round (post-commit 34a5e95), fixes shipped:
 
-### Phase 2 — config + app plumbing
+- [x] **Trust boundary:** `parse()` now rejects `/`, `\`, `.`/`..` in filenames — a
+  model-emitted ready-made `cite://` link (Textual returns hrefs URL-decoded) cannot
+  launch a file outside the library.
+- [x] **Nested brackets:** `_rewrite_citations` scans bracket depth; a citation inside
+  an outer `[...]` stays plain text. (The regex only matches the innermost citation, so
+  a match-group guard cannot work — depth scan needed.)
+- [ ] **Multiple citations in one bracket** (`[a.pdf p.1, b.pdf p.2]`) → resolves to one
+  bogus filename → "PDF not found" error. Deliberately unfixed in code; to be mitigated
+  at the prompt layer (one citation per bracket), see Phase 4.
 
-- [ ] `config/config.example.json`: add `"library": { "pdf_dir": "resources/pdfs" }`.
-- [ ] `llmtui/config.py`: `LIBRARY_DIR` under a new `"library"` section, path-resolved
-  against project root, fail-fast (existing loader style).
-- [ ] `app.py`: pass `LIBRARY_DIR` through to `LlmTui.__init__` → `self.library_dir`.
-- [ ] Note in a comment: Milvus metadata holds `basename` only, so two same-named PDFs
-  in different subdirs collide — accepted limitation.
+Validate: `uv run pytest tests/test_citations.py` (5 passed), `make lint` clean.
+
+### Phase 2 — config + app plumbing — DONE
+
+- [x] `config/config.example.json`: add `"library": { "pdf_dir": "resources/pdfs" }`.
+- [x] `llmtui/config.py`: `LIBRARY_DIR` under a new `"library"` section, path-resolved
+  against project root, fail-fast (existing loader style). Verified: missing section
+  raises `... config.json: missing or malformed section 'library'`.
+- [x] `app.py`: pass `LIBRARY_DIR` through to `LlmTui.__init__` → `self.library_dir`
+  (string, like the other paths; converted to `Path` only at click time in Phase 3).
+- [x] Note in a comment (config.py): Milvus metadata holds `basename` only, so two
+  same-named PDFs in different subdirs collide — accepted limitation.
 
 Validate: run app with the new key present and deliberately absent (loader must name
 file, section, key); `make lint`; tests still green.
 
-### Phase 3 — TUI wiring
+### Phase 3 — TUI wiring — DONE
 
-- [ ] `AssistantTurn.write_answer`: `await self._md.write(citations.normalize(text))` —
+- [x] `AssistantTurn.write_answer`: `await self._md.write(citations.normalize(text))` —
   normalize whole appends here, not per-chunk, because a citation can split across
   stream chunks and MarkdownStream re-parses final blocks anyway.
 
-- [ ] Reasoning: leave un-normalized (folded, links inert there) — revisit if it annoys.
+- [x] Reasoning: leave un-normalized (folded, links inert there) — revisit if it annoys.
 
-- [ ] `tui.py:251`: `Markdown(classes="answer", open_links=False)` — suppresses default
-  browser-open on answers; streamed content included (constructor flag covers
-  `MarkdownStream`).
+- [x] `Markdown(classes="answer", open_links=False)` — suppresses default browser-open
+  on answers; the constructor flag covers streamed content too.
 
-- [ ] Handler on `LlmTui`:
+- [x] Handler on `LlmTui`:
 
   ```python
   @on(Markdown.LinkClicked)
@@ -119,7 +132,8 @@ Validate: `uv run python app.py`, ask a cited question, click the citation — P
 - [ ] `prompts/system.txt`: add citation rule — cite as `[<filename>.pdf, pg. <n>]`
   exactly as returned by search results, e.g.
   `[n1_against_the_cult_of_the_reptile_god.pdf, pg. 14]`; never invent filenames or
-  pages. `search_books` output format stays untouched.
+  pages; **at most one citation per set of brackets** (the known multiple-in-one-bracket
+  gap lives here, not in citations.py). `search_books` output format stays untouched.
 
 Validate: fresh question over the library, answer contains bare citations that normalize
 into links (inspect via click behavior, or dump the markdown source temporarily while
@@ -127,6 +141,13 @@ testing).
 
 ## Open items / accepted limitations
 
+- Future idea (rough, not scheduled): live/remote library — e.g. a cron job rebuilding
+  the Milvus index while the harness runs, or `pdf_dir` pointed at a Nextcloud mount
+  instead of local files. The current wiring is ready for both: `search_books` reads
+  Milvus at call time, `open_pdf` stats the file at click time, and a not-found file
+  reports the directory it looked in (a cache-miss message, not a crash). Nothing will
+  need to change in the TUI handler — any fetch/sync logic belongs behind `open_pdf` or
+  beside `scripts/ingest.py`.
 - Page-open fidelity is reader-dependent: `#page=` works on Linux readers (evince,
   zathura) and PDF.js; macOS Preview needs AppleScript; Windows file-only. First cut
   ships Linux-page / macOS-file / Windows-file.
@@ -138,12 +159,17 @@ testing).
 
 ## Design decisions log
 
-| # | Decision | Why | | - | -------- | --- | | 1 | `cite://` scheme inside markdown
-links | one handler routes by scheme; distinguishes citations from web links;
-URL-encoding handles spaces | | 2 | `open_links=False` + app-level
-`@on(Markdown.LinkClicked)` | consumption of the message, not overriding Textual;
-`action_link`/message path unchanged | | 3 | normalize in `write_answer`, not per stream
-chunk | citation can split across chunks; re-parse of final blocks makes whole-append
-cheap | | 4 | error string from `open_pdf`, not exceptions | TUI decides presentation
-via `notify()`; pure module stays UI-free | | 5 | no changes to `search_books.py` | its
-`[source p.N]` output already feeds the model the (file, page) pairs to cite |
+| # | Decision | Why | | --- | ------------------------------------------------- |
+\-----------------------------------------------------------------------------------------
+| | 1 | `cite://` scheme inside markdown links | one handler routes by scheme;
+distinguishes citations from web links; URL-encoding handles | | | | spaces | | 2 |
+`open_links=False` + app-level `@on(Markdown.LinkClicked)` | consumption of the message,
+not overriding Textual; `action_link`/message path unchanged | | 3 | normalize in
+`write_answer`, not per stream chunk | citation can split across chunks; re-parse of
+final blocks makes whole-append cheap | | 4 | error string from `open_pdf`, not
+exceptions | TUI decides presentation via `notify()`; pure module stays UI-free | | 5 |
+no changes to `search_books.py` | its `[source p.N]` output already feeds the model the
+(file, page) pairs to cite | | 6 | `parse()` rejects paths (/, , ., ..) | model output
+is a trust boundary; a crafted link must not launch files outside the library | | 7 |
+bracket-depth guard in `_rewrite_citations` | nested-bracket input would rewrite into an
+unbalanced link and corrupt the paragraph |

@@ -13,6 +13,7 @@ search is dispatched rather than after the fact.
 
 import asyncio
 import time
+from pathlib import Path
 
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.utils.uuid import uuid7
@@ -34,7 +35,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from llmtui import config
+from llmtui import citations, config
 from llmtui.agent import build_agent, build_model
 from llmtui.models_config import load_models
 from llmtui.naming import name_session_if_unnamed
@@ -248,11 +249,22 @@ class AssistantTurn(Vertical):
     async def write_answer(self, text: str) -> None:
         if self.answer is None:
             self.fold_reasoning()
-            self.answer = Markdown(classes="answer")
+            # open_links=False: link clicks arrive as Markdown.LinkClicked for
+            # the app to route (citations open PDFs, web links still open a
+            # browser). The flag covers streamed content too, not just the
+            # final document.
+            self.answer = Markdown(classes="answer", open_links=False)
             await self.mount(self.answer)
             # MarkdownStream re-parses only the final block, so this stays cheap
             # however long the answer runs
             self._md = Markdown.get_stream(self.answer)
+        # bare citations take their link form here, on the whole append: a "["
+        # and its page can land in different chunks, and the stream's final-block
+        # re-parse makes per-append cost the only cost there is. chunks without
+        # a bracket "[" or a link-target "](" cannot hold a citation -- skip the
+        # scan entirely (the common case: most prose is citation-free)
+        if "[" in text or "](" in text:
+            text = citations.normalize(text)
         await self._md.write(text)
 
     async def note(self, text: str, classes: str = "note") -> None:
@@ -678,6 +690,9 @@ class LlmTui(App):
         agent_thread_config,
         mcp_status: MCPStatus,
         note_reader=None,
+        # where citations look for the cited PDFs (see llmtui/citations.py);
+        # a string here, resolved to a Path only at click time
+        library_dir: str = "",
     ) -> None:
         super().__init__()
         self.agent = agent
@@ -694,6 +709,7 @@ class LlmTui(App):
         # reads a note so a pending write can be shown as a diff. None when the
         # vault is not there, and the approval still happens either way
         self.note_reader = note_reader
+        self.library_dir = library_dir
         self._turn_started = 0.0
         self._out_chars = 0
 
@@ -764,6 +780,21 @@ class LlmTui(App):
         self.transcript.anchor()
         await self.transcript.mount(Static(text, classes="turn user"))
         self.run_turn(text)
+
+    # ---------- links ----------
+
+    @on(Markdown.LinkClicked)
+    async def on_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Citations open the PDF, everything else opens as a web link."""
+
+        event.stop()
+        citation = citations.parse(event.href)
+        if citation is None:
+            self.open_url(event.href)
+            return
+        error = citations.open_pdf(citation, Path(self.library_dir))
+        if error:
+            self.notify(error, severity="error", timeout=8)
 
     # ---------- the turn ----------
 

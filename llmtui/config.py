@@ -111,6 +111,12 @@ DISPLAY_THINKING: bool = bool(_get(_agent, "display_thinking"))
 _obsidian = _section("obsidian")
 OBSIDIAN_API_KEY: str = _get(_obsidian, "api_key")
 
+# the pdf library itself. citations resolve against this directory; ingest.py
+# reads the same directory from its argv, so the two must stay in sync. Milvus
+# metadata holds basenames only, so same-named PDFs in different subdirs collide
+_library = _section("library")
+LIBRARY_DIR: str = _path(_library, "pdf_dir")
+
 # where inspect_context.py leaves its rendered pages. not in config.json
 # because nothing else reads it and it is not a knob worth turning
 CONTEXT_DUMP_DIR: str = str(PROJECT_ROOT / "resources" / "context_inspection")
