@@ -179,7 +179,18 @@ def main() -> None:
             f"{MILVUS_DB} already exists. Wipe it before ingesting to avoid duplicates? (y/N): "
         )
         if confirm.strip().lower() == "y":
+            # stop the embedded milvus-lite server before wiping: client.close()
+            # only drops the connection, the in-process server thread keeps the
+            # DB dir alive and recreates files on the next connection
+            from milvus_lite.server_manager import server_manager_instance
+
+            server_manager_instance.release_server(os.path.abspath(MILVUS_DB))
             shutil.rmtree(MILVUS_DB)
+            if Path(MILVUS_DB).exists():
+                sys.exit(
+                    f"ERROR: {MILVUS_DB} could not be fully wiped -- a live "
+                    "connection is still holding the DB open. Close it and retry."
+                )
             print("Wiped existing vector store.")
         else:
             sys.exit("Aborting.")
