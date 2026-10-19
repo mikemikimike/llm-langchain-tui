@@ -97,7 +97,7 @@ Validate: `uv run pytest tests/test_citations.py` (5 passed), `make lint` clean.
 Validate: run app with the new key present and deliberately absent (loader must name
 file, section, key); `make lint`; tests still green.
 
-### Phase 3 — TUI wiring — DONE
+### Phase 3 — TUI wiring — DONE (answer clicks parked as issue #23)
 
 - [x] `AssistantTurn.write_answer`: `await self._md.write(citations.normalize(text))` —
   normalize whole appends here, not per-chunk, because a citation can split across
@@ -151,7 +151,11 @@ testing).
   bubbling → app handler → open_pdf). So the remaining break is where the terminal
   forwards mouse input to Textual, not in this feature's code. Diagnosis needs: which
   terminal + tmux?, whether `textual run --dev` shows style under cursor, and a
-  collision check between mouse reporting and selection modes.
+- **Answer citation clicks (parked):** render fine, dispatch never fires in the real
+  terminal despite the harness reproducing every modeled condition. Full observations,
+  hypotheses, and the devtools diagnosis recipe are in
+  https://github.com/umutucak/llm-langchain-tui/issues/23
+- Tool-row citation clicks: working (user-verified end-to-end).
 - Future idea (rough, not scheduled): live/remote library — e.g. a cron job rebuilding
   the Milvus index while the harness runs, or `pdf_dir` pointed at a Nextcloud mount
   instead of local files. The current wiring is ready for both: `search_books` reads
