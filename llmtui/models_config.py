@@ -92,6 +92,9 @@ class ModelEntry:
 
 @dataclass(frozen=True)
 class EmbeddingsEntry:
+    # picker label: which model this is, shown by the ingest prompt and
+    # stored in the db metadata so search can pick the matching entry
+    name: str
     # self-contained, not a provider reference: embeddings may run on a
     # different server than chat (e.g. remote API for chat, local ollama for
     # the vector store) and forcing one connection for both would forbid that
@@ -290,13 +293,31 @@ def load_embeddings(path: Path | None = None) -> EmbeddingsEntry:
     data = _load_json(path)
 
     raw = data.get("embeddings")
-    if not isinstance(raw, dict):
+    if not isinstance(raw, list) or not raw:
         raise RuntimeError(
-            f"{path}: missing or malformed 'embeddings' section (must be an"
-            " object with baseUrl, api, apiKey, model)"
+            f"{path}: missing or malformed 'embeddings' section (must be a"
+            " non-empty list of entries with name, baseUrl, api, apiKey,"
+            " model, batchSize, concurrency)"
         )
 
-    where = "embeddings"
+    entries: dict[str, EmbeddingsEntry] = {}
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"{path}: embeddings[{i}] must be an object")
+        where = f"embeddings[{i}]"
+        name = _require(item, "name", path, where)
+        if name in entries:
+            raise RuntimeError(f"{path}: duplicate embeddings name {name!r}")
+        entry = _parse_embeddings_entry(item, path, where, name)
+        entries[name] = entry
+    return entries
+
+
+def _parse_embeddings_entry(
+    raw: dict, path: str, where: str, name: str
+) -> EmbeddingsEntry:
+    """Validate one embeddings list entry; raises naming the file and index."""
+
     base_url = _require(raw, "baseUrl", path, f"{where} connection")
     api = _require(raw, "api", path, f"{where} connection")
     api_key = _require(raw, "apiKey", path, f"{where} connection")
@@ -349,6 +370,7 @@ def load_embeddings(path: Path | None = None) -> EmbeddingsEntry:
         )
 
     return EmbeddingsEntry(
+        name=name,
         base_url=base_url,
         api=api,
         api_key=api_key,

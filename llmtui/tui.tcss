@@ -26,6 +26,22 @@ Screen {
     height: auto;
 }
 
+/* the floating command menu: a row per still-matching command, shown above the
+   prompt while it holds a "/fragment". scrollbar off -- the list is seven long
+   at the moment and the prompt above it already scrolls */
+#command-menu {
+    height: auto;
+    max-height: 8;
+    padding: 0 1;
+    background: $panel;
+    border-top: solid $panel-lighten-2;
+    scrollbar-size-vertical: 0;
+}
+
+#command-menu.hidden {
+    display: none;
+}
+
 #prompt {
     border: none;
     border-top: solid $panel-lighten-2;
