@@ -56,7 +56,15 @@ def parse(href: str) -> Citation | None:
     if "%" in body:
         body = unquote(body)
     filename, _, page_part = body.partition("?p=")
-    if not filename or not page_part.isdigit():
+    # model output is a trust boundary: a ready-made link could name any path
+    # (Textual hands href over decoded), so only a bare filename may pass
+    if (
+        not filename
+        or not page_part.isdigit()
+        or "/" in filename
+        or "\\" in filename
+        or filename in (".", "..")
+    ):
         return None
     return Citation(filename=filename, page=int(page_part))
 
@@ -91,7 +99,23 @@ def _rewrite_citations(text: str) -> str:
             href += f"?p={match.group('page')}"
         return f"[{label}]({href})"
 
-    return _CITATION.sub(link, text)
+    # a citation nested inside another bracket group (model wrote its own
+    # bracketed aside) would rewrite into an unbalanced link and mangle the
+    # paragraph -- rewrite only citations at bracket depth 0, leave the rest
+    out: list[str] = []
+    pos = depth = 0
+    for match in _CITATION.finditer(text):
+        depth += text[pos : match.start()].count("[") - text[pos : match.start()].count(
+            "]"
+        )
+        out.append(text[pos : match.start()])
+        out.append(link(match) if depth == 0 else match.group())
+        pos = match.end()
+        depth += text[match.start() : pos].count("[") - text[match.start() : pos].count(
+            "]"
+        )
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def open_pdf(citation: Citation, library_dir: Path) -> str | None:
