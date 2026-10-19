@@ -19,5 +19,8 @@
     },
     "obsidian": {
         "api_key": "enter your api key here"
+    },
+    "library": {
+        "pdf_dir": "path/to/your/library"
     }
 }

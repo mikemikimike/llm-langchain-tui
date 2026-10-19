@@ -7,7 +7,7 @@ from langchain_core.utils.uuid import uuid7
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from llmtui.agent import build_agent, build_model
-from llmtui.config import SQLITE_DB_PATH
+from llmtui.config import LIBRARY_DIR, SQLITE_DB_PATH
 from llmtui.models_config import flatten, load_models
 from llmtui.sessions import connect
 from llmtui.tools.mcp import MCPStatus, get_mcp_tools, vault_reader
@@ -58,6 +58,7 @@ async def main_async() -> None:
             agent_thread_config,
             mcp_status,
             note_reader,
+            library_dir=LIBRARY_DIR,
         ).run_async()
 
 

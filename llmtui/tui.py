@@ -13,6 +13,7 @@ search is dispatched rather than after the fact.
 
 import asyncio
 import time
+from pathlib import Path
 
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.utils.uuid import uuid7
@@ -34,7 +35,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from llmtui import config
+from llmtui import citations, config
 from llmtui.agent import build_agent, build_model
 from llmtui.models_config import load_models
 from llmtui.naming import name_session_if_unnamed
@@ -99,7 +100,12 @@ class ToolRow(Collapsible):
         self._started = time.monotonic()
         self._spin = 0
         self._timer = None
-        self._body = Static("running…", classes="passages")
+        # a Markdown body, not a Static: search results carry [/path p.N] markers
+        # that Static's markup parser would eat as closing tags (crash), and
+        # verbatim-looking plain text misses what users actually do -- click the
+        # citation in the passage to open the book. Markdown parses it as literal
+        # text, so citations normalize() links up and nothing crashes
+        self._body = Markdown("running…", classes="passages", open_links=False)
         super().__init__(
             self._body,
             title=self._row_title(),
@@ -129,7 +135,7 @@ class ToolRow(Collapsible):
         self._spin = (self._spin + 1) % len(SPINNER)
         self.title = self._row_title()
 
-    def resolve(self, output, error, timed: bool = True) -> None:
+    async def resolve(self, output, error, timed: bool = True) -> None:
         """Settle the row once output_deltas has run dry.
 
         timed=False is for rows rebuilt from a checkpoint, where the duration
@@ -161,7 +167,9 @@ class ToolRow(Collapsible):
             # a ToolMessage with no exception is how the repair middleware reports
             # a dropped call. on_search_error's guidance is deliberately not shown
             # here -- it is instruction written for the model, not for the reader
-            self._body.update(preview(str(error) if error is not None else text))
+            await self._body.update(
+                citations.normalize(preview(str(error) if error is not None else text))
+            )
             return
 
         # a search that matched nothing is not a failure, so it arrives here
@@ -181,7 +189,9 @@ class ToolRow(Collapsible):
             self.add_class("-ok")
             self.title = self._row_title("✓", f"{compact(len(text))} chars{when}")
 
-        self._body.update(preview(text) or "(nothing returned)")
+        await self._body.update(
+            citations.normalize(preview(text)) or "(nothing returned)"
+        )
 
 
 class AssistantTurn(Vertical):
@@ -201,6 +211,9 @@ class AssistantTurn(Vertical):
         self.reasoning_body: Static | None = None
         self.answer: Markdown | None = None
         self._md = None
+        # the raw answer text of the current round, for the whole-answer
+        # normalize pass in close_round (citations split across appends)
+        self._answer_text = ""
         self._reasoning: list[str] = []
         self._reason_started: float | None = None
         self._folded = False
@@ -224,6 +237,21 @@ class AssistantTurn(Vertical):
         if self._md is not None:
             await self._md.stop()
             self._md = None
+        # a citation split across stream chunks only normalizes whole: re-render
+        # the finished answer into a FRESH Markdown (updating the streamed widget
+        # in place left links stale)
+        if self.answer is not None:
+            whole = citations.normalize(self._answer_text)
+            if whole != self._answer_text:
+                fresh = Markdown(classes="answer", open_links=False)
+                parent = self.answer.parent or self
+                await parent.mount(
+                    fresh, before=self.answer if self.answer.parent else None
+                )
+                await self.answer.remove()
+                self.answer = fresh
+                await fresh.update(whole)
+            self._answer_text = whole
         self.fold_reasoning()
 
     async def write_reasoning(self, text: str) -> None:
@@ -261,15 +289,23 @@ class AssistantTurn(Vertical):
     async def write_answer(self, text: str) -> None:
         if self.answer is None:
             self.fold_reasoning()
-            self.answer = Markdown(classes="answer")
+            # open_links=False: link clicks arrive as Markdown.LinkClicked for
+            # the app to route (citations open PDFs, web links still open a
+            # browser). The flag covers streamed content too, not just the
+            # final document.
+            self.answer = Markdown(classes="answer", open_links=False)
+            self._answer_text = ""
             await self.mount(self.answer)
             # MarkdownStream re-parses only the final block, so this stays cheap
             # however long the answer runs
             self._md = Markdown.get_stream(self.answer)
+        # raw text accumulates for close_round: a citation split across chunks
+        # only normalizes whole (answer is re-rendered once the round ends)
+        self._answer_text += text
         await self._md.write(text)
 
     async def note(self, text: str, classes: str = "note") -> None:
-        await self.mount(Static(text, classes=classes))
+        await self.mount(Static(text, classes=classes, markup=False))
 
     async def finish(self) -> None:
         await self.close_round()
@@ -783,6 +819,9 @@ class LlmTui(App):
         agent_thread_config,
         mcp_status: MCPStatus,
         note_reader=None,
+        # where citations look for the cited PDFs (see llmtui/citations.py);
+        # a string here, resolved to a Path only at click time
+        library_dir: str = "",
     ) -> None:
         super().__init__()
         self.agent = agent
@@ -799,6 +838,7 @@ class LlmTui(App):
         # reads a note so a pending write can be shown as a diff. None when the
         # vault is not there, and the approval still happens either way
         self.note_reader = note_reader
+        self.library_dir = library_dir
         self._turn_started = 0.0
         self._out_chars = 0
 
@@ -894,8 +934,23 @@ class LlmTui(App):
             return
 
         self.transcript.anchor()
-        await self.transcript.mount(Static(text, classes="turn user"))
+        await self.transcript.mount(Static(text, classes="turn user", markup=False))
         self.run_turn(text)
+
+    # ---------- links ----------
+
+    @on(Markdown.LinkClicked)
+    async def on_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Citations open the PDF, everything else opens as a web link."""
+
+        event.stop()
+        citation = citations.parse(event.href)
+        if citation is None:
+            self.open_url(event.href)
+            return
+        error = citations.open_pdf(citation, Path(self.library_dir))
+        if error:
+            self.notify(error, severity="error", timeout=8)
 
     # ---------- the turn ----------
 
@@ -1105,7 +1160,7 @@ class LlmTui(App):
             async for _ in tc.output_deltas:
                 pass
         finally:
-            row.resolve(tc.output, tc.error)
+            await row.resolve(tc.output, tc.error)
 
     async def _read_usage(self) -> None:
         """Token counts straight from the model, rather than guessed from text.
@@ -1242,7 +1297,7 @@ class LlmTui(App):
 
     async def _note(self, text: str, failed: bool = False) -> None:
         classes = "turn note failed" if failed else "turn note"
-        await self.transcript.mount(Static(text, classes=classes))
+        await self.transcript.mount(Static(text, classes=classes, markup=False))
         self.transcript.anchor()
 
     async def switch_model(self, selector: str) -> None:
@@ -1320,7 +1375,7 @@ class LlmTui(App):
         for message in messages:
             if isinstance(message, HumanMessage):
                 await self.transcript.mount(
-                    Static(str(message.content), classes="turn user")
+                    Static(str(message.content), classes="turn user", markup=False)
                 )
                 continue
             if not isinstance(message, AIMessage):
@@ -1330,7 +1385,7 @@ class LlmTui(App):
             await self.transcript.mount(turn)
             for call in message.tool_calls:
                 row = await turn.add_tool(call["id"], call["name"], call.get("args"))
-                row.resolve(results.get(call["id"]), None, timed=False)
+                await row.resolve(results.get(call["id"]), None, timed=False)
             answer = "".join(
                 block.get("text", "")
                 for block in message.content

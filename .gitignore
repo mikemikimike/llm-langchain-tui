@@ -12,3 +12,4 @@ resources/
 config/config.json
 config/models.json
 .vscode
+.DS_STORE
