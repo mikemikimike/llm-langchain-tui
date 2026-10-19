@@ -3,17 +3,59 @@ import re
 
 from langchain.tools import tool
 from langchain_milvus import BM25BuiltInFunction, Milvus
-from pymilvus import Function, FunctionType
+from pymilvus import Function, FunctionType, MilvusClient
 
 from llmtui.config import (
     DENSE_INDEX_TYPE,
     DENSE_METRIC_TYPE,
+    EMBEDDING_MODEL_KEY,
+    MILVUS_COLLECTION_NAME,
     MILVUS_GRPC_OPTIONS,
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
 )
 from llmtui.config import MILVUS_PROD_DB_PATH as MILVUS_DB
 from llmtui.models_config import build_embeddings, load_embeddings
+
+
+def _pick_embedding_entry():
+    """The embeddings entry matching the vectors in the current store.
+
+    The store records which entry built it (set by scripts/ingest.py as a
+    collection property on the LangChain collection). If it is missing or no
+    longer in models.json, the dense arm would silently be nonsense -- so a
+    single entry is used as the only sane guess, and anything else fails
+    loudly instead of returning wrong passages.
+    """
+
+    entries = load_embeddings()
+    client = MilvusClient(uri=MILVUS_DB, grpc_options=MILVUS_GRPC_OPTIONS)
+    try:
+        stored = None
+        if client.has_collection(MILVUS_COLLECTION_NAME):
+            desc = client.describe_collection(MILVUS_COLLECTION_NAME) or {}
+            value = (desc.get("properties") or {}).get(EMBEDDING_MODEL_KEY)
+            stored = value if isinstance(value, str) and value else None
+    finally:
+        client.close()
+    if stored is None:
+        # no store yet, or a store predating the tagging: nothing to match
+        # against, so a single entry is the only sane guess
+        if len(entries) == 1:
+            return next(iter(entries.values()))
+        raise RuntimeError(
+            f"vector store {MILVUS_DB} has no recorded embedding model and"
+            " models.json lists more than one -- run scripts/ingest.py to"
+            " rebuild it and tag which one it was built with"
+        )
+    if stored in entries:
+        return entries[stored]
+    raise RuntimeError(
+        f"vector store {MILVUS_DB} was built with embeddings entry"
+        f" {stored!r}, which is no longer in models.json -- re-ingest"
+        " or restore the entry"
+    )
+
 
 # different then model sampling TOP_K.
 # 5 retrievals for now, i dont want to flood the context.
@@ -30,7 +72,7 @@ RRF_K = 60
 # has to mirror the schema ingest.py builds, or the collection won't load.
 # BM25 is exact-term only here -- see the note in ingest.py
 vector_store = Milvus(
-    embedding_function=build_embeddings(load_embeddings()),
+    embedding_function=build_embeddings(_pick_embedding_entry()),
     builtin_function=BM25BuiltInFunction(),
     vector_field=["dense", "sparse"],
     # must match ingest.py -- see the note there on why SPARSE_INVERTED_INDEX

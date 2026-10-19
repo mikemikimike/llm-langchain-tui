@@ -96,6 +96,12 @@ DENSE_INDEX_TYPE: str = _get(_milvus, "dense_index_type")
 SPARSE_METRIC_TYPE: str = _get(_milvus, "sparse_metric_type")
 SPARSE_INDEX_TYPE: str = _get(_milvus, "sparse_index_type")
 
+# fixed by langchain_milvus, not user-configurable: the name it gives its
+# collection, and the property key ingest.py uses to record which embeddings
+# entry built the store. shared by ingest and search so the two can't drift
+MILVUS_COLLECTION_NAME: str = "LangChainCollection"
+EMBEDDING_MODEL_KEY: str = "embedding_model"
+
 MILVUS_GRPC_OPTIONS: dict = {
     "grpc.keepalive_permit_without_calls": False,
     "grpc.keepalive_time_ms": 300_000,

@@ -9,6 +9,7 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.documents import Document
 from langchain_milvus import BM25BuiltInFunction, Milvus
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pymilvus import MilvusClient
 from tqdm import tqdm
 
 # this is run straight from a shell, so the project root has to go on the path
@@ -18,12 +19,82 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from llmtui.config import (
     DENSE_INDEX_TYPE,
     DENSE_METRIC_TYPE,
+    EMBEDDING_MODEL_KEY,
+    MILVUS_COLLECTION_NAME,
     MILVUS_GRPC_OPTIONS,
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
 )
 from llmtui.config import MILVUS_DEV_DB_PATH as MILVUS_DB
 from llmtui.models_config import build_embeddings, load_embeddings
+
+# which embeddings entry built a store: recorded as a collection property so
+# search_books can pick the matching entry and a future ingest can show which
+# one is live. pymilvus 3.0 exposes this as collection properties:
+# alter_collection_properties to write, describe_collection to read. a store
+# built before this tagging exists has no such property -- describe returns
+# {} for it, so the read is None, not an error
+
+
+def _store_client() -> MilvusClient:
+    return MilvusClient(uri=MILVUS_DB, grpc_options=MILVUS_GRPC_OPTIONS)
+
+
+def read_embedding_model() -> str | None:
+    """The embedding entry name recorded on the store, or None.
+
+    None means "not tagged": the database has no collection yet (ingest
+    never ran against it) or predates the tagging.
+    """
+
+    client = _store_client()
+    try:
+        if not client.has_collection(MILVUS_COLLECTION_NAME):
+            return None
+        desc = client.describe_collection(MILVUS_COLLECTION_NAME) or {}
+        value = (desc.get("properties") or {}).get(EMBEDDING_MODEL_KEY)
+        return value if isinstance(value, str) and value else None
+    finally:
+        client.close()
+
+
+def read_dense_dim() -> int | None:
+    """The dim of the store's dense vector field, or None if no collection.
+
+    The schema is fixed at collection creation: a model with a different dim
+    cannot insert into it, so this is what the pre-wipe check compares the
+    picked entry against.
+    """
+
+    client = _store_client()
+    try:
+        if not client.has_collection(MILVUS_COLLECTION_NAME):
+            return None
+        desc = client.describe_collection(MILVUS_COLLECTION_NAME) or {}
+        for field in desc.get("fields") or []:
+            if field.get("name") == "dense":
+                dim = (field.get("params") or {}).get("dim")
+                return int(dim) if dim is not None else None
+        return None
+    finally:
+        client.close()
+
+
+def write_embedding_model(name: str) -> None:
+    """Record which embeddings entry produced this store's vectors.
+
+    Called once after the first batch lands (the collection exists by then);
+    a later call just overwrites the same property.
+    """
+
+    client = _store_client()
+    try:
+        client.alter_collection_properties(
+            MILVUS_COLLECTION_NAME, {EMBEDDING_MODEL_KEY: name}
+        )
+    finally:
+        client.close()
+
 
 CHUNK_SIZE: int = 1000
 CHUNK_OVERLAP: int = 150
@@ -40,6 +111,34 @@ def load_pdf(path: Path) -> list[Document]:
     return PyMuPDFLoader(str(path)).load()
 
 
+def pick_embedding_entry(entries: dict[str, object], current: str | None) -> object:
+    """Ask which embeddings entry to build with; auto-pick when unambiguous.
+
+    One entry configured: no question, it is the only choice. Several:
+    list them numbered, marking the one that built the current store, and
+    read a choice from the user. The stored tag is informational -- picking
+    a different entry still wipes and rebuilds with the new model.
+    """
+
+    if len(entries) == 1:
+        name = next(iter(entries))
+        print(f"Using embedding model: {name}")
+        return entries[name]
+
+    print("Embedding models in models.json:")
+    names = list(entries)
+    for i, name in enumerate(names, start=1):
+        marker = "  (current store)" if name == current else ""
+        print(f"  {i}. {name}{marker}")
+    while True:
+        choice = input(f"Which one to build with? [1-{len(names)}]: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(names):
+            name = names[int(choice) - 1]
+            print(f"Using embedding model: {name}")
+            return entries[name]
+        print(f"Enter a number between 1 and {len(names)}.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Ingest a directory of PDFs into the dev vector store."
@@ -52,6 +151,28 @@ def main() -> None:
     if not Path(PDF_DIR).is_dir():
         parser.error(f"{PDF_DIR} is not a directory")
 
+    # pick the embedding model before anything destructive: the vectors it
+    # produces are what the wipe throws away, so the choice comes first
+    entries = load_embeddings()
+    current = read_embedding_model() if Path(MILVUS_DB).exists() else None
+    entry = pick_embedding_entry(entries, current)
+
+    # dimension check before the wipe: the schema is fixed at collection
+    # creation, so a model with a different dim cannot insert into the
+    # existing store. catch it here, not on the first batch.
+    if Path(MILVUS_DB).exists():
+        store_dim = read_dense_dim()
+        if store_dim is not None:
+            test_vec = build_embeddings(entry).embed_documents(["dim check"])
+            model_dim = len(test_vec[0])
+            if model_dim != store_dim:
+                print(
+                    f"ERROR: existing store has dim {store_dim}, but "
+                    f"{entry.name} produces dim {model_dim}. "
+                    f"You must wipe the store to rebuild with this model."
+                )
+                sys.exit(1)
+
     # check for protecting previous db
     if Path(MILVUS_DB).exists():
         confirm = input(
@@ -63,7 +184,6 @@ def main() -> None:
         else:
             sys.exit("Aborting.")
 
-    entry = load_embeddings()
     embeddings = build_embeddings(entry)
     # model-bound ingest tuning, not script-bound: how many documents one
     # /v1/embeddings call carries (bounded by the model's context window)
@@ -140,6 +260,10 @@ def main() -> None:
         # i frontload and create the collection and its schema.
         # otherwise there is a race condition below raising DataNotMatchException
         vector_store.add_documents(batches[0])
+        # tag the store with the model that built it, so search_books can
+        # pick the matching entry and a future ingest can show which one is
+        # live. the collection exists now (first batch created it)
+        write_embedding_model(entry.name)
         # cheeky little parallelisation again. god forbid i doom scroll too long
         with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as executor:
             futures = {

@@ -7,6 +7,7 @@ resources/
 .entire/
 # herve:gitignore:end
 .claude
+.pi
 .env
 config/config.json
 config/models.json
