@@ -11,6 +11,7 @@ opens the PDF at that page). Nothing here imports the UI: open_pdf hands back an
 error string instead of raising, and the caller decides how to show it.
 """
 
+import glob
 import os
 import platform
 import re
@@ -169,14 +170,105 @@ def _linux_reader_args(path: Path, page: int) -> list[str]:
     return ["xdg-open", str(path)]
 
 
+# Windows readers and how each takes a page. Unlike xdg-open, these are the
+# actual viewer processes: the "#page=N" fragment is a real CLI argument they
+# understand (Chromium's PDFium viewer and Acrobat both support it), while
+# ShellExecute (os.startfile) would treat it as part of the path and fail.
+# Order is preference: Edge is the Win10/11 default, Acrobat and Foxit the
+# long-standing alternatives.
+# Each entry: (argv template, candidate locations). Edge and Chrome are NOT on
+# PATH on a stock install, so which() alone would miss them -- check the fixed
+# install locations too (LOCALAPPDATA/ProgramFiles vary per user and drive).
+_WINDOWS_READERS: list[tuple[list[str], list[str]]] = [
+    (
+        ["{bin}", "{path}#page={page}"],
+        [
+            "msedge",
+            r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe",
+        ],
+    ),
+    (
+        ["{bin}", "{path}#page={page}"],
+        [
+            "chrome",
+            r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+            r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+        ],
+    ),
+    (
+        ["{bin}", "{path}#page={page}"],
+        [
+            "AcroRd32",
+            r"%ProgramFiles%\Adobe\Acrobat*\Acrobat\AcroRd32.exe",
+            r"%ProgramFiles(x86)%\Adobe\Acrobat*\Acrobat\AcroRd32.exe",
+        ],
+    ),
+    (
+        ["{bin}", "/t", "{path}", "/p", "{page}"],
+        [
+            "FoxitPDFReader",
+            r"%ProgramFiles%\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe",
+            r"%ProgramFiles(x86)%\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe",
+        ],
+    ),
+]
+
+
+def _windows_reader_args(path: Path, page: int) -> list[str] | None:
+    """argv for the first installed reader that can take a page argument,
+    or None so the caller can fall back to os.startfile (file only).
+
+    Candidates may be bare names (resolved via which) or paths containing
+    %ENV% tokens and globs, since the stock locations are not on PATH.
+    """
+
+    for argv_template, candidates in _WINDOWS_READERS:
+        for candidate in candidates:
+            if "\\" not in candidate:
+                resolved = shutil.which(candidate)
+            else:
+                resolved = os.path.expandvars(candidate)
+                matches = glob.glob(resolved)
+                resolved = matches[0] if matches else None
+            if resolved:
+                return [
+                    a.format(bin=resolved, path=path, page=page) for a in argv_template
+                ]
+    return None
+
+
+def _spawn(argv: list[str]) -> None:
+    """Launch a GUI reader as a fully detached child.
+
+    The reader must survive the TUI dying and must not die with it: on Windows
+    CREATE_NEW_PROCESS_GROUP keeps Ctrl+C from the console from killing it;
+    on POSIX start_new_session() does the same (new session + group, so
+    terminal hangups don't reach it either). DEVNULL on all three stdio means
+    no pipes to deadlock on and no inherited handles the child could hold open
+    after we exit.
+    """
+
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(argv, **kwargs)
+
+
 def open_pdf(citation: Citation, library_dir: Path) -> str | None:
     """Open the cited PDF at its page with the system default reader.
 
     Returns an error message on failure -- caller shows it -- or None on
     success. Page-arg fidelity is reader-dependent: Linux readers get the page
     as a real CLI argument (each has its own syntax -- see _LINUX_READERS);
-    macOS Preview and Windows have no reliable page argument, so the file
-    alone opens.
+    Windows readers get the "#page=N" fragment as a real argument (see
+    _WINDOWS_READERS); macOS Preview has no page argument, so the file alone
+    opens.
     """
 
     if citation.page < 1:
@@ -205,7 +297,13 @@ def open_pdf(citation: Citation, library_dir: Path) -> str | None:
         if system == "Darwin":
             subprocess.run(["open", str(path)], check=True)
         elif system == "Windows":
-            os.startfile(path)  # type: ignore[attr-defined]
+            argv = _windows_reader_args(path, citation.page)
+            if argv is None:
+                # no known reader: ShellExecute the bare path -- no fragment,
+                # it would be treated as part of the filename
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                _spawn(argv)
         else:
             # Popen, not run: GUI readers stay in the foreground of their own
             # process tree, and run() would block the whole TUI until the user
@@ -215,12 +313,7 @@ def open_pdf(citation: Citation, library_dir: Path) -> str | None:
             if argv[0] == "xdg-open":
                 subprocess.run(argv, check=True)
             else:
-                subprocess.Popen(
-                    argv,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                _spawn(argv)
     except (OSError, subprocess.CalledProcessError) as error:
         return f"Could not open {citation.filename}: {error}"
     return None
