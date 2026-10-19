@@ -14,6 +14,7 @@ error string instead of raising, and the caller decides how to show it.
 import os
 import platform
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,13 +138,45 @@ def _search_library(citation: Citation, library_dir: Path, root: Path) -> str | 
     )
 
 
+# Linux readers and the argv each needs to open a file at a given page. The
+# "#page=N" fragment is a PDF.js/browser convention, NOT a path suffix --
+# xdg-open passes it straight through and readers like Okular then fail with
+# "file does not exist". Every reader below takes the page as real CLI args.
+# Order is preference: most common first (okular, evince, zathura cover most
+# desktop installs).
+_LINUX_READERS = [
+    ("okular", ["--page", "{page}"]),
+    ("evince", ["--page-number", "{page}"]),
+    ("zathura", ["--page", "{page}"]),
+    ("atril", ["--page-number", "{page}"]),
+    ("mupdf", ["-p", "{page}"]),
+    ("xpdf", ["-f", "{page}"]),
+    ("qpdfview", ["--page", "{page}"]),
+]
+
+
+def _linux_reader_args(path: Path, page: int) -> list[str]:
+    """argv for the first installed reader that can take a page argument.
+
+    Falls back to xdg-open with the bare path when no known reader is found --
+    the file still opens, just without a page. xdg-open alone is never tried
+    with the fragment: it cannot interpret it either.
+    """
+
+    for binary, page_args in _LINUX_READERS:
+        if shutil.which(binary):
+            return [binary] + [a.format(page=page) for a in page_args] + [str(path)]
+    return ["xdg-open", str(path)]
+
+
 def open_pdf(citation: Citation, library_dir: Path) -> str | None:
     """Open the cited PDF at its page with the system default reader.
 
     Returns an error message on failure -- caller shows it -- or None on
-    success. Page-arg fidelity is reader-dependent: the "#page=" fragment works
-    on Linux readers (evince, zathura) and PDF.js; macOS Preview has no CLI
-    page argument so the file alone opens; Windows opens files only.
+    success. Page-arg fidelity is reader-dependent: Linux readers get the page
+    as a real CLI argument (each has its own syntax -- see _LINUX_READERS);
+    macOS Preview and Windows have no reliable page argument, so the file
+    alone opens.
     """
 
     if citation.page < 1:
@@ -174,7 +207,20 @@ def open_pdf(citation: Citation, library_dir: Path) -> str | None:
         elif system == "Windows":
             os.startfile(path)  # type: ignore[attr-defined]
         else:
-            subprocess.run(["xdg-open", f"{path}#page={citation.page}"], check=True)
+            # Popen, not run: GUI readers stay in the foreground of their own
+            # process tree, and run() would block the whole TUI until the user
+            # closes the reader. xdg-open is a quick launcher that exits on its
+            # own, so check=True still applies to it
+            argv = _linux_reader_args(path, citation.page)
+            if argv[0] == "xdg-open":
+                subprocess.run(argv, check=True)
+            else:
+                subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
     except (OSError, subprocess.CalledProcessError) as error:
         return f"Could not open {citation.filename}: {error}"
     return None
