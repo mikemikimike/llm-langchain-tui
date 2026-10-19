@@ -127,13 +127,15 @@ Validate: `uv run python app.py`, ask a cited question, click the citation — P
 (page on Linux); click a URL link if the model produces one — browser still opens.
 `make lint`, full `uv run pytest`.
 
-### Phase 4 — prompt
+### Phase 4 — prompt — DONE
 
-- [ ] `prompts/system.txt`: add citation rule — cite as `[<filename>.pdf, pg. <n>]`
-  exactly as returned by search results, e.g.
-  `[n1_against_the_cult_of_the_reptile_god.pdf, pg. 14]`; never invent filenames or
-  pages; **at most one citation per set of brackets** (the known multiple-in-one-bracket
-  gap lives here, not in citations.py). `search_books` output format stays untouched.
+- [x] `prompts/system.txt`: citation rule — copy the `[filename.pdf p.N]` marker
+  verbatim from search results, never invent filenames/pages, **at most one citation per
+  bracket** (the multiple-in-one-bracket gap closes here), and why: the interface turns
+  exactly this syntax into the clickable open-at-page link.
+- [x] `search_books` docstring: same contract, in the tool description the model reads
+  at call time — markers verbatim, link opens PDF at page N, never merge two results
+  into one marker. `search_books` output format itself untouched.
 
 Validate: fresh question over the library, answer contains bare citations that normalize
 into links (inspect via click behavior, or dump the markdown source temporarily while

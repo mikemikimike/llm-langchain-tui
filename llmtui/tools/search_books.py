@@ -102,7 +102,11 @@ def search_books(query: str, book: str = "") -> tuple[str, dict]:
 
     Returns the passages and, alongside them, how many there were. The count
     goes in the artifact rather than the text, so the tool row can show that a
-    search came back empty without that number reaching the model.
+    search came back empty without that number reaching the model. Cite the
+    passages you use by copying each result's opening marker -- [file.pdf p.N]
+    -- verbatim into the answer: the interface turns exactly that syntax into a
+    link that opens the PDF at page N. Never alter the filename or page, never
+    merge two results into one marker.
     """
 
     # clean the arg from query chars. milvus uses its own expression language
