@@ -87,10 +87,12 @@ class ToolRow(Collapsible):
         self._started = time.monotonic()
         self._spin = 0
         self._timer = None
-        # markup=False: tool output is echoed verbatim, and search results now
-        # carry [/full/path.pdf p.N] markers that Static would parse as closing
-        # tags and crash the screen
-        self._body = Static("running…", classes="passages", markup=False)
+        # a Markdown body, not a Static: search results carry [/path p.N] markers
+        # that Static's markup parser would eat as closing tags (crash), and
+        # verbatim-looking plain text misses what users actually do -- click the
+        # citation in the passage to open the book. Markdown parses it as literal
+        # text, so citations normalize() links up and nothing crashes
+        self._body = Markdown("running…", classes="passages", open_links=False)
         super().__init__(
             self._body,
             title=self._row_title(),
@@ -120,7 +122,7 @@ class ToolRow(Collapsible):
         self._spin = (self._spin + 1) % len(SPINNER)
         self.title = self._row_title()
 
-    def resolve(self, output, error, timed: bool = True) -> None:
+    async def resolve(self, output, error, timed: bool = True) -> None:
         """Settle the row once output_deltas has run dry.
 
         timed=False is for rows rebuilt from a checkpoint, where the duration
@@ -152,7 +154,9 @@ class ToolRow(Collapsible):
             # a ToolMessage with no exception is how the repair middleware reports
             # a dropped call. on_search_error's guidance is deliberately not shown
             # here -- it is instruction written for the model, not for the reader
-            self._body.update(preview(str(error) if error is not None else text))
+            await self._body.update(
+                citations.normalize(preview(str(error) if error is not None else text))
+            )
             return
 
         # a search that matched nothing is not a failure, so it arrives here
@@ -172,7 +176,9 @@ class ToolRow(Collapsible):
             self.add_class("-ok")
             self.title = self._row_title("✓", f"{compact(len(text))} chars{when}")
 
-        self._body.update(preview(text) or "(nothing returned)")
+        await self._body.update(
+            citations.normalize(preview(text)) or "(nothing returned)"
+        )
 
 
 class AssistantTurn(Vertical):
@@ -192,6 +198,9 @@ class AssistantTurn(Vertical):
         self.reasoning_body: Static | None = None
         self.answer: Markdown | None = None
         self._md = None
+        # the raw answer text of the current round, for the whole-answer
+        # normalize pass in close_round (citations split across appends)
+        self._answer_text = ""
         self._reasoning: list[str] = []
         self._reason_started: float | None = None
         self._folded = False
@@ -215,6 +224,21 @@ class AssistantTurn(Vertical):
         if self._md is not None:
             await self._md.stop()
             self._md = None
+        # a citation split across stream chunks only normalizes whole: re-render
+        # the finished answer into a FRESH Markdown (updating the streamed widget
+        # in place left links stale)
+        if self.answer is not None:
+            whole = citations.normalize(self._answer_text)
+            if whole != self._answer_text:
+                fresh = Markdown(classes="answer", open_links=False)
+                parent = self.answer.parent or self
+                await parent.mount(
+                    fresh, before=self.answer if self.answer.parent else None
+                )
+                await self.answer.remove()
+                self.answer = fresh
+                await fresh.update(whole)
+            self._answer_text = whole
         self.fold_reasoning()
 
     async def write_reasoning(self, text: str) -> None:
@@ -257,17 +281,14 @@ class AssistantTurn(Vertical):
             # browser). The flag covers streamed content too, not just the
             # final document.
             self.answer = Markdown(classes="answer", open_links=False)
+            self._answer_text = ""
             await self.mount(self.answer)
             # MarkdownStream re-parses only the final block, so this stays cheap
             # however long the answer runs
             self._md = Markdown.get_stream(self.answer)
-        # bare citations take their link form here, on the whole append: a "["
-        # and its page can land in different chunks, and the stream's final-block
-        # re-parse makes per-append cost the only cost there is. chunks without
-        # a bracket "[" or a link-target "](" cannot hold a citation -- skip the
-        # scan entirely (the common case: most prose is citation-free)
-        if "[" in text or "](" in text:
-            text = citations.normalize(text)
+        # raw text accumulates for close_round: a citation split across chunks
+        # only normalizes whole (answer is re-rendered once the round ends)
+        self._answer_text += text
         await self._md.write(text)
 
     async def note(self, text: str, classes: str = "note") -> None:
@@ -1007,7 +1028,7 @@ class LlmTui(App):
             async for _ in tc.output_deltas:
                 pass
         finally:
-            row.resolve(tc.output, tc.error)
+            await row.resolve(tc.output, tc.error)
 
     async def _read_usage(self) -> None:
         """Token counts straight from the model, rather than guessed from text.
@@ -1236,7 +1257,7 @@ class LlmTui(App):
             await self.transcript.mount(turn)
             for call in message.tool_calls:
                 row = await turn.add_tool(call["id"], call["name"], call.get("args"))
-                row.resolve(results.get(call["id"]), None, timed=False)
+                await row.resolve(results.get(call["id"]), None, timed=False)
             answer = "".join(
                 block.get("text", "")
                 for block in message.content
