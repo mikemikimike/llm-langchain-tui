@@ -157,22 +157,6 @@ def main() -> None:
     current = read_embedding_model() if Path(MILVUS_DB).exists() else None
     entry = pick_embedding_entry(entries, current)
 
-    # dimension check before the wipe: the schema is fixed at collection
-    # creation, so a model with a different dim cannot insert into the
-    # existing store. catch it here, not on the first batch.
-    if Path(MILVUS_DB).exists():
-        store_dim = read_dense_dim()
-        if store_dim is not None:
-            test_vec = build_embeddings(entry).embed_documents(["dim check"])
-            model_dim = len(test_vec[0])
-            if model_dim != store_dim:
-                print(
-                    f"ERROR: existing store has dim {store_dim}, but "
-                    f"{entry.name} produces dim {model_dim}. "
-                    f"You must wipe the store to rebuild with this model."
-                )
-                sys.exit(1)
-
     # check for protecting previous db
     if Path(MILVUS_DB).exists():
         confirm = input(
