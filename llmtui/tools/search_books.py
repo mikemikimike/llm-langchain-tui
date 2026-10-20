@@ -192,6 +192,9 @@ def search_books(query: str, book: str = "") -> tuple[str, dict]:
     for doc in results:
         source = doc.metadata.get("source", "unknown")
         page = doc.metadata.get("page", "?")
+        # PyMuPDFLoader starts counting at 0, opens one page before when clicking, so:
+        if isinstance(page, int):
+            page += 1
         formatted.append(f"[{source} p.{page}]\n{doc.page_content}")
 
     return "\n\n---\n\n".join(formatted), {"passages": len(results)}
