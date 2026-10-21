@@ -4,6 +4,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import pymupdf
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.documents import Document
 from langchain_milvus import BM25BuiltInFunction, Milvus
@@ -14,6 +15,10 @@ from tqdm import tqdm
 # this is run straight from a shell, so the project root has to go on the path
 # before anything under llmtui can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# silent harmless warnings
+os.environ.setdefault("GRPC_VERBOSITY", "NONE")
+pymupdf.TOOLS.mupdf_display_errors(None)
 
 from llmtui.config import (
     DENSE_INDEX_TYPE,
@@ -214,6 +219,9 @@ def main() -> None:
         ],
         # milvus grpc sends keep_alive messages, adding noise to the frontend
         connection_args={"uri": MILVUS_DB, "grpc_options": MILVUS_GRPC_OPTIONS},
+        # we never read ids back, so let milvus mint them: also silences the
+        # "No ids provided and auto_id is False" UserWarning on every add
+        auto_id=True,
     )
 
     pdf_paths = list(Path(PDF_DIR).rglob("*.pdf"))

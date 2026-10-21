@@ -90,6 +90,9 @@ vector_store = Milvus(
     ],
     # milvus grpc sends keep_alive messages, adding noise to the frontend
     connection_args={"uri": MILVUS_DB, "grpc_options": MILVUS_GRPC_OPTIONS},
+    # we never read ids back, so let milvus mint them: also silences the
+    # "No ids provided and auto_id is False" UserWarning on every add
+    auto_id=True,
 )
 
 # https://milvus.io/docs/rrf-ranker.md
