@@ -50,11 +50,9 @@ slash commands in the TUI: `/help`, `/model`, `/name`, `/load`, `/new`, `/delete
 ## rag / ingest
 
 `ingest.py` builds a hybrid (dense + bm25) milvus index from a directory of PDFs into
-the dev db. promote to prod by copying over it. run this from the root of the project:
-
-```
-rm -rf db/milvus_prod.db && cp -r db/milvus_dev.db db/milvus_prod.db
-```
+the live store at `db/milvus.db`. If a store already exists, it is moved to
+`db/backups/` (only the last backup is kept) before the rebuild — no manual copying.
+`restore.py` swaps a backup back into place. run this from the root of the project:
 
 embeddings are provider-agnostic too: the `embeddings` section of `config/models.json`
 (names a `baseUrl`, `apiKey`, and `model`) — any `/v1/embeddings`-compatible server

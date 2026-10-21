@@ -77,8 +77,9 @@ uv run python scripts/inspect_context.py    # dump a thread's context as HTML fo
   LangGraph's checkpoint tables; model names its own threads.
 - `scripts/` — async support tasks run straight from a shell. They insert the project
   root onto `sys.path` themselves before importing `llmtui`.
-  - `ingest.py`: PDFs → Milvus dev db (hybrid dense+BM25). Promote dev → prod by copying
-    `db/milvus_dev.db` over `db/milvus_prod.db` (see README).
+  - `ingest.py`: PDFs → Milvus live db (hybrid dense+BM25). A preexisting store
+    is moved to `db/backups/` (last-1 kept) before rebuilding; `restore.py`
+    swaps a backup back into place.
   - `inspect_context.py`: renders a checkpointed thread as a self-contained HTML page in
     `resources/context_inspection/`.
 

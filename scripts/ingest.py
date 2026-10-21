@@ -1,6 +1,5 @@
 import argparse
 import os
-import shutil
 import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -20,13 +19,17 @@ from llmtui.config import (
     DENSE_INDEX_TYPE,
     DENSE_METRIC_TYPE,
     EMBEDDING_MODEL_KEY,
+    MILVUS_BACKUP_DIR,
     MILVUS_COLLECTION_NAME,
+    MILVUS_DB_PATH,
     MILVUS_GRPC_OPTIONS,
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
 )
-from llmtui.config import MILVUS_DEV_DB_PATH as MILVUS_DB
 from llmtui.models_config import build_embeddings, load_embeddings
+from llmtui.store_backup import backup_store
+
+MILVUS_DB = MILVUS_DB_PATH
 
 # which embeddings entry built a store: recorded as a collection property so
 # search_books can pick the matching entry and a future ingest can show which
@@ -141,7 +144,7 @@ def pick_embedding_entry(entries: dict[str, object], current: str | None) -> obj
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Ingest a directory of PDFs into the dev vector store."
+        description="Ingest a directory of PDFs into the live vector store."
     )
     parser.add_argument("pdf_dir", help="directory to search recursively for PDFs")
     args = parser.parse_args()
@@ -157,27 +160,22 @@ def main() -> None:
     current = read_embedding_model() if Path(MILVUS_DB).exists() else None
     entry = pick_embedding_entry(entries, current)
 
-    # check for protecting previous db
+    # a preexisting store is moved to the backup dir before building: the
+    # move is the backup (issue #24), and building into a fresh location
+    # sidesteps the dim-mismatch trap of rebuilding over an old schema
     if Path(MILVUS_DB).exists():
         confirm = input(
-            f"{MILVUS_DB} already exists. Wipe it before ingesting to avoid duplicates? (y/N): "
+            f"{MILVUS_DB} already exists. Back it up and rebuild from scratch? (y/N): "
         )
-        if confirm.strip().lower() == "y":
-            # stop the embedded milvus-lite server before wiping: client.close()
-            # only drops the connection, the in-process server thread keeps the
-            # DB dir alive and recreates files on the next connection
-            from milvus_lite.server_manager import server_manager_instance
-
-            server_manager_instance.release_server(os.path.abspath(MILVUS_DB))
-            shutil.rmtree(MILVUS_DB)
-            if Path(MILVUS_DB).exists():
-                sys.exit(
-                    f"ERROR: {MILVUS_DB} could not be fully wiped -- a live "
-                    "connection is still holding the DB open. Close it and retry."
-                )
-            print("Wiped existing vector store.")
-        else:
+        if confirm.strip().lower() != "y":
             sys.exit("Aborting.")
+        dest = backup_store(MILVUS_DB, MILVUS_BACKUP_DIR)
+        print(f"Backed up existing store to {dest}")
+        if Path(MILVUS_DB).exists():
+            sys.exit(
+                f"ERROR: {MILVUS_DB} could not be fully moved -- a live "
+                "connection is still holding the DB open. Close it and retry."
+            )
 
     embeddings = build_embeddings(entry)
     # model-bound ingest tuning, not script-bound: how many documents one

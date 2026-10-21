@@ -83,8 +83,9 @@ def _int(section: dict, key: str) -> int:
 # paths
 _paths = _section("paths")
 SQLITE_DB_PATH: str = _path(_paths, "sqlite_db")
-MILVUS_DEV_DB_PATH: str = _path(_paths, "milvus_dev_db")
-MILVUS_PROD_DB_PATH: str = _path(_paths, "milvus_prod_db")
+# single live vector store + backup dir (issue #24, replaces the dev/prod split)
+MILVUS_DB_PATH: str = _path(_paths, "milvus_db")
+MILVUS_BACKUP_DIR: str = _path(_paths, "backup_dir")
 SYSTEM_PROMPT_PATH: str = _path(_paths, "system_prompt")
 SELF_NAME_PROMPT_PATH: str = _path(_paths, "self_name_prompt")
 OBSIDIAN_CERT_PATH: str = _path(_paths, "obsidian_cert")

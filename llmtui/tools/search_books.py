@@ -13,7 +13,7 @@ from llmtui.config import (
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
 )
-from llmtui.config import MILVUS_PROD_DB_PATH as MILVUS_DB
+from llmtui.config import MILVUS_DB_PATH as MILVUS_DB
 from llmtui.models_config import build_embeddings, load_embeddings
 
 
