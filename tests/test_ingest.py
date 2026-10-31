@@ -19,7 +19,7 @@ def test_build_embeddings_has_bounded_defaults():
 
     embeddings = build_embeddings(entry)
 
-    assert embeddings.client._client.timeout == 60.0
+    assert embeddings.client._client.timeout == 120.0
     assert embeddings.max_retries == 2
 
 

@@ -450,7 +450,7 @@ def build_embeddings(entry: EmbeddingsEntry):
 
     params = dict(entry.params or {})
     # Bound dead response bodies by default while preserving provider overrides.
-    params.setdefault("timeout", 60.0)
+    params.setdefault("timeout", 120.0)
     params.setdefault("max_retries", 2)
 
     return OpenAIEmbeddings(

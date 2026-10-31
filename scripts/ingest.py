@@ -109,8 +109,13 @@ def embed_and_insert_batches(vector_store, batches, workers: int) -> None:
     if not batches:
         return
 
+    # i frontload and create the collection and its schema.
+    # otherwise there is a race condition below raising DataNotMatchException
     vector_store.add_documents(batches[0])
+    # collect failures instead of logging and ignoring them: a store with a
+    # missing batch must not be stamped usable
     failures = []
+    # cheeky little parallelisation again. god forbid i doom scroll too long
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(vector_store.add_documents, batch): number
@@ -290,11 +295,11 @@ def main() -> None:
     batches = [chunks[i : i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
 
     if batches:
-        # i frontload and create the collection and its schema.
-        # otherwise there is a race condition below raising DataNotMatchException
-        vector_store.add_documents(batches[0])
         embed_and_insert_batches(vector_store, batches, EMBED_WORKERS)
-        # Only mark the store usable after every batch has been persisted.
+        # tag the store with the model that built it, so search_books can
+        # pick the matching entry and a future ingest can show which one is
+        # live. the collection exists now (first batch created it)
+        # only mark the store usable after every batch has been persisted
         write_embedding_model(entry.name)
 
     print("Done.")
